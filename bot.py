@@ -353,6 +353,47 @@ def handle_broadcast(message):
         f"<i>Do you want to send this to the Announcements topic?</i>",
         reply_markup=markup
     )
+
+@bot.message_handler(commands=["user", "lookup"])
+def handle_user_lookup(message):
+    if not is_admin(message):
+        return
+        
+    target_id, target_username, target_fname = resolve_target_user(message)
+    if not target_id:
+        bot.reply_to(
+            message,
+            "❌ Please target a user by replying to their message or specifying their ID/username.\n"
+            "Usage: `/user @username`"
+        )
+        return
+        
+    user_info = db.get_user(target_id)
+    if not user_info:
+        bot.reply_to(message, "❌ User not found in the database.")
+        return
+        
+    quota_used = user_info["quota_used"]
+    max_quota = user_info["max_quota"]
+    email = user_info["email"] or "Not registered"
+    auth_status = "✅ Yes" if user_info["is_authorized"] else "🚫 No"
+    
+    recent_links = db.get_recent_access_links(target_id, limit=5)
+    links_text = "\n".join([f"- {safe_html(link)}" for link in recent_links]) if recent_links else "None requested yet."
+    
+    text = (
+        f"🔍 <b>User Profile Lookup</b>\n\n"
+        f"👤 <b>Name:</b> {safe_html(target_fname)}\n"
+        f"📛 <b>Username:</b> @{safe_html(target_username or 'None')}\n"
+        f"🆔 <b>Telegram ID:</b> <code>{target_id}</code>\n"
+        f"📧 <b>Email:</b> <code>{safe_html(email)}</code>\n"
+        f"✅ <b>Authorized:</b> {auth_status}\n"
+        f"📊 <b>Quota:</b> {max_quota - quota_used} remaining (Used {quota_used}/{max_quota})\n\n"
+        f"📂 <b>Last 5 Requested Comps:</b>\n{links_text}"
+    )
+    
+    bot.reply_to(message, text)
+
 @bot.message_handler(commands=["stats"])
 def handle_stats(message):
     if not is_admin(message):
