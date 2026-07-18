@@ -88,12 +88,27 @@ def share_file_or_folder(file_id, email, role="reader"):
     
     try:
         # Create permissions
-        permission = service.permissions().create(
-            fileId=file_id,
-            body=user_permission,
-            fields="id",
-            sendNotificationEmail=False
-        ).execute()
+        # We try with sendNotificationEmail=False first (works for Google Workspace)
+        try:
+            permission = service.permissions().create(
+                fileId=file_id,
+                body=user_permission,
+                fields="id",
+                sendNotificationEmail=False,
+                supportsAllDrives=True
+            ).execute()
+        except HttpError as e:
+            # If it's a 400 Bad Request regarding sendNotificationEmail, fallback to True
+            if e.resp.status == 400 and 'sendNotificationEmail' in str(e):
+                permission = service.permissions().create(
+                    fileId=file_id,
+                    body=user_permission,
+                    fields="id",
+                    sendNotificationEmail=True,
+                    supportsAllDrives=True
+                ).execute()
+            else:
+                raise e
         
         return permission.get("id")
     except HttpError as error:
@@ -113,7 +128,8 @@ def revoke_file_or_folder(file_id, permission_id):
     try:
         service.permissions().delete(
             fileId=file_id,
-            permissionId=permission_id
+            permissionId=permission_id,
+            supportsAllDrives=True
         ).execute()
         return True
     except HttpError as error:
