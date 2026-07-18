@@ -6,39 +6,30 @@ import html
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
-
 import db
 import gdrive
-
 # Load configuration from .env file
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_IDS_STR = os.getenv("OWNER_IDS")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 ACCESS_REQUEST_THREAD_ID = os.getenv("ACCESS_REQUEST_THREAD_ID")
-
 # Ensure required configurations are present
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is missing in the environment or .env file.")
 if not OWNER_IDS_STR:
     raise ValueError("OWNER_IDS is missing in the environment or .env file.")
-
 # Normalize IDs
 OWNER_IDS = [int(x.strip()) for x in OWNER_IDS_STR.split(",") if x.strip()]
 ADMIN_CHAT_ID = int(ADMIN_CHAT_ID) if ADMIN_CHAT_ID else None
 ACCESS_REQUEST_THREAD_ID = int(ACCESS_REQUEST_THREAD_ID) if ACCESS_REQUEST_THREAD_ID else None
-
 # Initialize bot with HTML parsing support (much safer than Markdown for usernames with underscores)
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
-
 # Email regex pattern
 EMAIL_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
-
 # ----------------- RENDER HEALTH CHECK SERVER -----------------
 # Render free-tier Web Services require binding to a port and responding to HTTP requests,
 # otherwise Render will mark the service as failed and shut it down.
-
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -49,13 +40,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Suppress request log printouts to keep bot console clean
         return
-
 def run_health_check_server():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     print(f"Health check server running on port {port}...")
     server.serve_forever()
-
 # Helper: Check if sender is owner or admin in the group
 def is_admin(message):
     user_id = message.from_user.id
@@ -79,7 +68,6 @@ def is_admin(message):
             pass
             
     return False
-
 # Helper: Check if callback sender is owner or admin in group
 def is_callback_admin(call):
     user_id = call.from_user.id
@@ -101,7 +89,6 @@ def is_callback_admin(call):
             pass
             
     return False
-
 # Helper: Resolve target user from command arguments or message reply
 def resolve_target_user(message):
     # 1. Check if replying to a message
@@ -134,7 +121,6 @@ def resolve_target_user(message):
         return target_id, username, first_name
         
     return None, target, None
-
 # Helper: Send messages to admin topic/chat
 def send_to_admin_chat(text, reply_markup=None):
     if not ADMIN_CHAT_ID:
@@ -153,7 +139,6 @@ def send_to_admin_chat(text, reply_markup=None):
     except Exception as e:
         print(f"Failed to send to admin chat: {e}")
         return None
-
 # Helper: Forward video message to admin topic/chat
 def forward_video_to_admin(video_message, caption, reply_markup=None):
     if not ADMIN_CHAT_ID:
@@ -183,15 +168,13 @@ def forward_video_to_admin(video_message, caption, reply_markup=None):
     except Exception as e:
         print(f"Failed to forward video to admin chat: {e}")
         return None
-
 # Helper: Safely escape HTML characters for safe text insertion
 def safe_html(text):
     if not text:
         return ""
     return html.escape(str(text))
-
 # ----------------- ADMIN COMMAND HANDLERS -----------------
-
+pending_broadcasts = {}
 @bot.message_handler(commands=["auth", "authorize"])
 def handle_auth(message):
     if not is_admin(message):
@@ -223,7 +206,6 @@ def handle_auth(message):
     except Exception:
         # User might not have started the bot yet
         pass
-
 @bot.message_handler(commands=["unauth", "unauthorize"])
 def handle_unauth(message):
     if not is_admin(message):
@@ -277,7 +259,6 @@ def handle_unauth(message):
         )
     except Exception:
         pass
-
 @bot.message_handler(commands=["grant"])
 def handle_grant(message):
     if not is_admin(message):
@@ -317,7 +298,6 @@ def handle_grant(message):
         )
     except Exception:
         pass
-
 @bot.message_handler(commands=["public"])
 def handle_public(message):
     if not is_admin(message):
@@ -340,9 +320,69 @@ def handle_public(message):
         message,
         f"📢 Link marked as <b>Public</b> ({safe_html(item_type)}). Users requesting this link will be redirected to teasers without consuming quota."
     )
-
+@bot.message_handler(commands=["broadcast"])
+def handle_broadcast(message):
+    if not is_admin(message):
+        return
+        
+    # Restrict preview to private DMs only to avoid cluttering the group
+    if message.chat.type != "private":
+        bot.reply_to(message, "❌ Please use the `/broadcast` command in my private DMs, not in the group chat.")
+        return
+        
+    text = message.text.replace("/broadcast", "", 1).strip()
+    if not text:
+        bot.reply_to(message, "❌ Usage: `/broadcast [your message]`")
+        return
+        
+    if not ADMIN_CHAT_ID:
+        bot.reply_to(message, "❌ ADMIN_CHAT_ID is not configured. Cannot send broadcast to announcement topic.")
+        return
+        
+    pending_broadcasts[message.from_user.id] = text
+    
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton("✅ Send to Announcements", callback_data=f"confirm_broadcast:{message.from_user.id}"),
+        InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{message.from_user.id}")
+    )
+    
+    bot.reply_to(
+        message,
+        f"📢 <b>Broadcast Preview:</b>\n\n{safe_html(text)}\n\n"
+        f"<i>Do you want to send this to the Announcements topic?</i>",
+        reply_markup=markup
+    )
+@bot.message_handler(commands=["stats"])
+def handle_stats(message):
+    if not is_admin(message):
+        return
+        
+    # Restrict stats to private DMs only to avoid cluttering the group
+    if message.chat.type != "private":
+        bot.reply_to(message, "❌ Please use the `/stats` command in my private DMs, not in the group chat.")
+        return
+        
+    stats = db.get_stats()
+    
+    lb_text = ""
+    for i, user in enumerate(stats["leaderboard"], 1):
+        username = f"@{user['username']}" if user['username'] else user['first_name']
+        lb_text += f"{i}. {safe_html(username)} - {user['req_count']} comps\n"
+        
+    if not lb_text:
+        lb_text = "No compilations requested yet."
+        
+    text = (
+        f"📊 <b>Bot Statistics</b>\n\n"
+        f"👥 <b>Total Authorized Buyers:</b> {stats['total_authorized']}\n"
+        f"🎁 <b>Total Comps Shared (All Time):</b> {stats['total_shared']}\n"
+        f"📅 <b>Comps Shared (Last 7 Days):</b> {stats['shared_7_days']}\n\n"
+        f"🏆 <b>Top Requesters Leaderboard:</b>\n{lb_text}"
+    )
+    
+    bot.reply_to(message, text)
 # ----------------- CHAT MEMBER JOIN HANDLER -----------------
-
 @bot.message_handler(content_types=["new_chat_members"])
 def handle_new_members(message):
     # Only process if in the configured admin/exclusive group
@@ -370,9 +410,7 @@ def handle_new_members(message):
         
         # Post in the Access Request thread
         send_to_admin_chat(text, reply_markup=markup)
-
 # ----------------- CALLBACK BUTTON HANDLER -----------------
-
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     if not is_callback_admin(call):
@@ -410,7 +448,6 @@ def handle_callbacks(call):
             )
         except Exception:
             pass
-
     # 2. Email Change approval/rejection
     elif data.startswith("approve_email:") or data.startswith("reject_email:"):
         action, user_id_str = data.split(":")
@@ -457,7 +494,6 @@ def handle_callbacks(call):
                 )
             except Exception:
                 pass
-
     # 3. Edit video review approval/rejection
     elif data.startswith("approve_edit:") or data.startswith("reject_edit:"):
         action, user_id_str = data.split(":")
@@ -499,9 +535,56 @@ def handle_callbacks(call):
                 )
             except Exception:
                 pass
-
+    # 4. Broadcast confirmation/cancellation
+    elif data.startswith("confirm_broadcast:") or data.startswith("cancel_broadcast:"):
+        action, user_id_str = data.split(":")
+        user_id = int(user_id_str)
+        
+        # Only the person who initiated the broadcast can confirm/cancel it
+        if call.from_user.id != user_id:
+            bot.answer_callback_query(call.id, "You cannot confirm/cancel someone else's broadcast.", show_alert=True)
+            return
+            
+        text = pending_broadcasts.pop(user_id, None)
+        
+        if not text:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="❌ This broadcast has expired or was already handled."
+            )
+            bot.answer_callback_query(call.id, "Expired broadcast.")
+            return
+            
+        if action == "confirm_broadcast":
+            try:
+                topic_id = int(os.getenv("ANNOUNCEMENT_THREAD_ID", 4))
+                bot.send_message(
+                    ADMIN_CHAT_ID,
+                    f"📢 <b>Announcement:</b>\n\n{safe_html(text)}",
+                    message_thread_id=topic_id
+                )
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=f"✅ <b>Broadcast Sent Successfully!</b>\n\n{safe_html(text)}"
+                )
+                bot.answer_callback_query(call.id, "Broadcast sent!")
+            except Exception as e:
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=f"❌ <b>Failed to send broadcast:</b>\n{e}"
+                )
+                bot.answer_callback_query(call.id, "Error sending broadcast.")
+        else:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"❌ <b>Broadcast Cancelled.</b>"
+            )
+            bot.answer_callback_query(call.id, "Cancelled.")
 # ----------------- PRIVATE DM HANDLERS (BUYERS) -----------------
-
 # Save user info cache on any message (especially in groups to map usernames)
 @bot.message_handler(func=lambda message: True, content_types=["text", "photo", "video", "document"])
 def handle_all_incoming(message):
@@ -517,7 +600,6 @@ def handle_all_incoming(message):
     # Standard route processing for private DMs
     if message.chat.type == "private":
         process_private_message(message)
-
 def process_private_message(message):
     user_id = message.from_user.id
     
@@ -547,14 +629,11 @@ def process_private_message(message):
                 f"📊 Quota Used: <b>{quota_used} / {max_quota}</b>"
             )
         return
-
     # Check authorization for any other DMs
     if not db.is_user_authorized(user_id):
         bot.reply_to(message, "❌ Access Denied. You are not authorized.")
         return
-
     user_info = db.get_user(user_id)
-
     # 2. Email registration or change flow
     if message.text and re.match(EMAIL_REGEX, message.text.strip()):
         new_email = message.text.strip().lower()
@@ -598,7 +677,6 @@ def process_private_message(message):
                 f"⏳ Email change request submitted. Your email remains <code>{safe_html(old_email)}</code> until the administrator approves <code>{safe_html(new_email)}</code>."
             )
         return
-
     # 3. Google Drive Link submission
     if message.text and ("drive.google.com" in message.text):
         if not user_info["email"]:
@@ -656,7 +734,6 @@ def process_private_message(message):
                 f"2. Check if your registered email <code>{safe_html(user_info['email'])}</code> is a valid Google account."
             )
         return
-
     # 4. Video upload for quota reset
     if message.content_type == "video":
         quota_used, max_quota = db.get_quota(user_id)
@@ -694,7 +771,6 @@ def process_private_message(message):
             "You will be notified as soon as it is approved or rejected!"
         )
         return
-
     # Catch-all reply for private DMs
     bot.reply_to(
         message,
@@ -704,7 +780,6 @@ def process_private_message(message):
         "- Send a Google Drive file/folder link to request access.\n"
         "- If your quota is reached, upload your video edit file to reset it."
     )
-
 # Start bot
 if __name__ == "__main__":
     db.init_db()

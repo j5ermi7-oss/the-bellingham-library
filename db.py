@@ -1,14 +1,11 @@
 import sqlite3
 import os
-
 # Allow DB_PATH to be overridden via environment variables (vital for cloud persistent disks)
 DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "bot_data.db"))
-
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
-
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -61,7 +58,6 @@ def init_db():
     
     conn.commit()
     conn.close()
-
 # Username Cache Operations
 def save_username_mapping(username, telegram_id):
     if not username:
@@ -75,7 +71,6 @@ def save_username_mapping(username, telegram_id):
     )
     conn.commit()
     conn.close()
-
 def get_id_from_username(username):
     if not username:
         return None
@@ -86,7 +81,6 @@ def get_id_from_username(username):
     row = cursor.fetchone()
     conn.close()
     return row["telegram_id"] if row else None
-
 # User Operations
 def authorize_user(telegram_id, username=None, first_name=None):
     if username:
@@ -113,7 +107,6 @@ def authorize_user(telegram_id, username=None, first_name=None):
         )
     conn.commit()
     conn.close()
-
 def unauthorize_user(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -123,7 +116,6 @@ def unauthorize_user(telegram_id):
     )
     conn.commit()
     conn.close()
-
 def is_user_authorized(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -131,7 +123,6 @@ def is_user_authorized(telegram_id):
     row = cursor.fetchone()
     conn.close()
     return bool(row["is_authorized"]) if row else False
-
 def get_user(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -139,7 +130,6 @@ def get_user(telegram_id):
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
-
 def register_email(telegram_id, email):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -149,7 +139,6 @@ def register_email(telegram_id, email):
     )
     conn.commit()
     conn.close()
-
 def set_pending_email(telegram_id, pending_email):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -159,7 +148,6 @@ def set_pending_email(telegram_id, pending_email):
     )
     conn.commit()
     conn.close()
-
 def approve_pending_email(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -176,7 +164,6 @@ def approve_pending_email(telegram_id):
         success = False
     conn.close()
     return success
-
 def reject_pending_email(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -186,7 +173,6 @@ def reject_pending_email(telegram_id):
     )
     conn.commit()
     conn.close()
-
 # Quota Operations
 def get_quota(telegram_id):
     conn = get_db_connection()
@@ -195,7 +181,37 @@ def get_quota(telegram_id):
     row = cursor.fetchone()
     conn.close()
     return (row["quota_used"], row["max_quota"]) if row else (0, 3)
-
+def get_stats():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) as count FROM users WHERE is_authorized = 1")
+    total_authorized = cursor.fetchone()["count"]
+    
+    cursor.execute("SELECT COUNT(*) as count FROM access_history")
+    total_shared = cursor.fetchone()["count"]
+    
+    cursor.execute("SELECT COUNT(*) as count FROM access_history WHERE granted_at >= datetime('now', '-7 days')")
+    shared_7_days = cursor.fetchone()["count"]
+    
+    cursor.execute("""
+        SELECT u.username, u.first_name, COUNT(a.id) as req_count 
+        FROM access_history a
+        JOIN users u ON a.telegram_id = u.telegram_id
+        GROUP BY a.telegram_id 
+        ORDER BY req_count DESC 
+        LIMIT 10
+    """)
+    leaderboard = [dict(row) for row in cursor.fetchall()]
+    
+    conn.close()
+    
+    return {
+        "total_authorized": total_authorized,
+        "total_shared": total_shared,
+        "shared_7_days": shared_7_days,
+        "leaderboard": leaderboard
+    }
 def increment_quota(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -205,7 +221,6 @@ def increment_quota(telegram_id):
     )
     conn.commit()
     conn.close()
-
 def reset_quota(telegram_id, max_quota=3):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -215,7 +230,6 @@ def reset_quota(telegram_id, max_quota=3):
     )
     conn.commit()
     conn.close()
-
 # Access History Operations
 def log_access(telegram_id, email, file_id, file_url, permission_id):
     conn = get_db_connection()
@@ -226,7 +240,6 @@ def log_access(telegram_id, email, file_id, file_url, permission_id):
     )
     conn.commit()
     conn.close()
-
 def get_access_history(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -237,14 +250,12 @@ def get_access_history(telegram_id):
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
-
 def clear_access_history(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM access_history WHERE telegram_id = ?", (telegram_id,))
     conn.commit()
     conn.close()
-
 def get_recent_access_links(telegram_id, limit=3):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -255,7 +266,6 @@ def get_recent_access_links(telegram_id, limit=3):
     rows = cursor.fetchall()
     conn.close()
     return [row["file_url"] for row in rows]
-
 # Public Links Operations
 def add_public_link(file_id, file_url):
     conn = get_db_connection()
@@ -266,7 +276,6 @@ def add_public_link(file_id, file_url):
     )
     conn.commit()
     conn.close()
-
 def is_public_link(file_id):
     conn = get_db_connection()
     cursor = conn.cursor()
