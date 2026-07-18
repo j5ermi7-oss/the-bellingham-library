@@ -292,7 +292,6 @@ def is_public_link(file_id):
     row = cursor.fetchone()
     conn.close()
     return row is not None
-
 # Blacklist Operations
 def ban_user(telegram_id, email):
     conn = get_db_connection()
@@ -303,7 +302,6 @@ def ban_user(telegram_id, email):
     )
     conn.commit()
     conn.close()
-
 def is_banned(telegram_id, email=None):
     conn = get_db_connection()
     cursor = conn.cursor()

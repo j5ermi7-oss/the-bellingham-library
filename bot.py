@@ -261,7 +261,6 @@ def handle_unauth(message):
         )
     except Exception:
         pass
-
 @bot.message_handler(commands=["ban"])
 def handle_ban(message):
     if not is_admin(message):
@@ -416,7 +415,6 @@ def handle_broadcast(message):
         f"<i>Do you want to send this to the Announcements topic?</i>",
         reply_markup=markup
     )
-
 @bot.message_handler(commands=["user", "lookup"])
 def handle_user_lookup(message):
     if not is_admin(message):
@@ -456,7 +454,6 @@ def handle_user_lookup(message):
     )
     
     bot.reply_to(message, text)
-
 @bot.message_handler(commands=["stats"])
 def handle_stats(message):
     if not is_admin(message):
