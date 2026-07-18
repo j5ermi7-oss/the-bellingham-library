@@ -245,6 +245,17 @@ def clear_access_history(telegram_id):
     conn.commit()
     conn.close()
 
+def get_recent_access_links(telegram_id, limit=3):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT file_url FROM access_history WHERE telegram_id = ? ORDER BY granted_at DESC LIMIT ?",
+        (telegram_id, limit)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [row["file_url"] for row in rows]
+
 # Public Links Operations
 def add_public_link(file_id, file_url):
     conn = get_db_connection()

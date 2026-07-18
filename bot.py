@@ -668,11 +668,15 @@ def process_private_message(message):
             return
             
         # Send to admin chat
+        recent_links = db.get_recent_access_links(user_id, limit=3)
+        links_text = "\n".join([f"- {safe_html(link)}" for link in recent_links]) if recent_links else "None found"
+        
         caption = (
             f"🎬 <b>Edit Verification Request</b>\n"
             f"User: {safe_html(message.from_user.first_name)} (@{safe_html(message.from_user.username or 'None')})\n"
             f"ID: <code>{user_id}</code>\n"
             f"Email: <code>{safe_html(user_info['email'])}</code>\n\n"
+            f"<b>Recently Requested Links:</b>\n{links_text}\n\n"
             f"Review the attached video edit to reset their access quota."
         )
         
