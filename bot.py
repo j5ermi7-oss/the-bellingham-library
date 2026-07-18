@@ -320,7 +320,7 @@ def handle_public(message):
         message,
         f"📢 Link marked as <b>Public</b> ({safe_html(item_type)}). Users requesting this link will be redirected to teasers without consuming quota."
     )
-@bot.message_handler(commands=["broadcast"])
+@bot.message_handler(commands=["broadcast", "brodcast"])
 def handle_broadcast(message):
     if not is_admin(message):
         return
@@ -330,7 +330,7 @@ def handle_broadcast(message):
         bot.reply_to(message, "❌ Please use the `/broadcast` command in my private DMs, not in the group chat.")
         return
         
-    text = message.text.replace("/broadcast", "", 1).strip()
+    text = message.text.replace("/broadcast", "", 1).replace("/brodcast", "", 1).strip()
     if not text:
         bot.reply_to(message, "❌ Usage: `/broadcast [your message]`")
         return
@@ -561,7 +561,7 @@ def handle_callbacks(call):
                 topic_id = int(os.getenv("ANNOUNCEMENT_THREAD_ID", 4))
                 bot.send_message(
                     ADMIN_CHAT_ID,
-                    f"📢 <b>Announcement:</b>\n\n{safe_html(text)}",
+                    f"{safe_html(text)}",
                     message_thread_id=topic_id
                 )
                 bot.edit_message_text(
