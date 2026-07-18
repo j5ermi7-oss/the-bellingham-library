@@ -140,34 +140,18 @@ def send_to_admin_chat(text, reply_markup=None):
     except Exception as e:
         print(f"Failed to send to admin chat: {e}")
         return None
-# Helper: Forward video message to admin topic/chat
+# Helper: Forward video message to admin's private DM
 def forward_video_to_admin(video_message, caption, reply_markup=None):
-    if not ADMIN_CHAT_ID:
-        try:
-            # Re-send video file to first owner DM
-            return bot.send_video(
-                OWNER_IDS[0],
-                video_message.video.file_id,
-                caption=caption,
-                reply_markup=reply_markup
-            )
-        except Exception as e:
-            print(f"Failed to forward video to owner DM: {e}")
-            return None
-            
     try:
-        kwargs = {}
-        if ACCESS_REQUEST_THREAD_ID:
-            kwargs["message_thread_id"] = ACCESS_REQUEST_THREAD_ID
+        # Send video file directly to the first owner's DM
         return bot.send_video(
-            ADMIN_CHAT_ID,
+            OWNER_IDS[0],
             video_message.video.file_id,
             caption=caption,
-            reply_markup=reply_markup,
-            **kwargs
+            reply_markup=reply_markup
         )
     except Exception as e:
-        print(f"Failed to forward video to admin chat: {e}")
+        print(f"Failed to forward video to owner DM: {e}")
         return None
 # Helper: Safely escape HTML characters for safe text insertion
 def safe_html(text):
