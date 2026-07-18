@@ -56,6 +56,15 @@ def init_db():
     )
     """)
     
+    # 5. Blacklist
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS blacklist (
+        telegram_id INTEGER,
+        email TEXT,
+        banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    
     conn.commit()
     conn.close()
 # Username Cache Operations
@@ -280,6 +289,28 @@ def is_public_link(file_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT file_id FROM public_links WHERE file_id = ?", (file_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+
+# Blacklist Operations
+def ban_user(telegram_id, email):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO blacklist (telegram_id, email) VALUES (?, ?)",
+        (telegram_id, email)
+    )
+    conn.commit()
+    conn.close()
+
+def is_banned(telegram_id, email=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if email:
+        cursor.execute("SELECT 1 FROM blacklist WHERE telegram_id = ? OR email = ?", (telegram_id, email))
+    else:
+        cursor.execute("SELECT 1 FROM blacklist WHERE telegram_id = ?", (telegram_id,))
     row = cursor.fetchone()
     conn.close()
     return row is not None

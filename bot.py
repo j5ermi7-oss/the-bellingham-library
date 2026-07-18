@@ -3,6 +3,7 @@ import re
 import telebot
 import threading
 import html
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
@@ -175,6 +176,7 @@ def safe_html(text):
     return html.escape(str(text))
 # ----------------- ADMIN COMMAND HANDLERS -----------------
 pending_broadcasts = {}
+last_request_time = {}
 @bot.message_handler(commands=["auth", "authorize"])
 def handle_auth(message):
     if not is_admin(message):
@@ -259,6 +261,67 @@ def handle_unauth(message):
         )
     except Exception:
         pass
+
+@bot.message_handler(commands=["ban"])
+def handle_ban(message):
+    if not is_admin(message):
+        return
+        
+    target_id, target_username, target_fname = resolve_target_user(message)
+    if not target_id:
+        username_hint = f" (@{target_username})" if target_username else ""
+        bot.reply_to(
+            message,
+            f"❌ Could not resolve user{username_hint} in cache.\n"
+            "Please ban by replying to their message in the group, or by using their Telegram User ID."
+        )
+        return
+        
+    # Get email if registered
+    user_info = db.get_user(target_id)
+    email = user_info["email"] if user_info else None
+    
+    # 1. Unauthorize
+    db.unauthorize_user(target_id)
+    
+    # 2. Add to Blacklist
+    db.ban_user(target_id, email)
+    
+    # 3. Revoke all Google Drive files
+    history = db.get_access_history(target_id)
+    revoked_count = 0
+    failed_count = 0
+    
+    for item in history:
+        try:
+            gdrive.revoke_file_or_folder(item["file_id"], item["permission_id"])
+            revoked_count += 1
+        except Exception:
+            failed_count += 1
+            
+    db.clear_access_history(target_id)
+    
+    # 4. Ban from the main group physically
+    ban_status = "Skipped (no ADMIN_CHAT_ID)"
+    if ADMIN_CHAT_ID:
+        try:
+            bot.ban_chat_member(ADMIN_CHAT_ID, target_id)
+            ban_status = "✅ Banned from group"
+        except Exception as e:
+            ban_status = f"❌ Failed to ban from group ({e})"
+            
+    response = (
+        f"☢️ <b>USER NUKED</b> ☢️\n\n"
+        f"User: <b>{safe_html(target_fname)}</b> (@{safe_html(target_username or 'no_username')})\n"
+        f"ID: <code>{target_id}</code>\n"
+        f"Email: <code>{safe_html(email or 'None')}</code>\n\n"
+        f"📋 <b>Actions Taken:</b>\n"
+        f"- Blacklisted in Database: ✅\n"
+        f"- Google Drive Files Revoked: {revoked_count} (Failed: {failed_count})\n"
+        f"- Telegram Chat Ban: {ban_status}"
+    )
+    
+    bot.reply_to(message, response)
 @bot.message_handler(commands=["grant"])
 def handle_grant(message):
     if not is_admin(message):
@@ -434,6 +497,18 @@ def handle_new_members(message):
         # Cache username mapping
         db.save_username_mapping(member.username, member.id)
         
+        # Enforce Blacklist immediately
+        if db.is_banned(member.id):
+            try:
+                bot.ban_chat_member(ADMIN_CHAT_ID, member.id)
+                bot.send_message(
+                    ADMIN_CHAT_ID, 
+                    f"☢️ Blacklisted user <code>{member.id}</code> attempted to join and was automatically banned."
+                )
+            except Exception:
+                pass
+            continue
+            
         # Prepare auth card
         text = (
             f"🆕 <b>New Buyer Joined Group</b>\n"
@@ -680,6 +755,12 @@ def process_private_message(message):
         new_email = message.text.strip().lower()
         old_email = user_info["email"]
         
+        # Enforce Blacklist on email
+        if db.is_banned(user_id, email=new_email):
+            bot.reply_to(message, "❌ This email address is blacklisted.")
+            send_to_admin_chat(f"🚨 <b>Blacklist Alert</b>\nUser <code>{user_id}</code> attempted to register a blacklisted email: <code>{safe_html(new_email)}</code>")
+            return
+            
         if not old_email:
             # First time registering email
             db.register_email(user_id, new_email)
@@ -737,6 +818,23 @@ def process_private_message(message):
                 "You don't need the bot's help this time. Enjoy! (Your quota was not charged.)"
             )
             return
+            
+        # Anti-Scraping Speed Limit (60 seconds)
+        current_time = time.time()
+        last_time = last_request_time.get(user_id, 0)
+        if current_time - last_time < 60:
+            bot.reply_to(
+                message, 
+                "⏳ <b>Anti-Scrape Protection:</b> Please wait 60 seconds before requesting another compilation."
+            )
+            text = (
+                f"🚨 <b>Suspicious Scraping Alert</b>\n"
+                f"User {safe_html(user_info['first_name'])} (<code>{user_id}</code>) is requesting comps too quickly (<60s apart)."
+            )
+            send_to_admin_chat(text)
+            return
+            
+        last_request_time[user_id] = current_time
             
         # Check quota
         quota_used, max_quota = db.get_quota(user_id)
