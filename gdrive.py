@@ -18,6 +18,9 @@ def get_drive_service():
     if env_creds:
         try:
             info = json.loads(env_creds)
+            # Fix double-escaped newlines in private key
+            if "private_key" in info:
+                info["private_key"] = info["private_key"].replace("\\n", "\n")
             creds = service_account.Credentials.from_service_account_info(
                 info, scopes=SCOPES
             )
@@ -33,10 +36,19 @@ def get_drive_service():
             "file in the bot directory."
         )
     
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES
-    )
-    return build("drive", "v3", credentials=creds)
+    try:
+        with open(SERVICE_ACCOUNT_FILE, "r") as f:
+            info = json.load(f)
+        # Fix double-escaped newlines in private key if they copied and pasted the key file
+        if "private_key" in info:
+            info["private_key"] = info["private_key"].replace("\\n", "\n")
+        creds = service_account.Credentials.from_service_account_info(
+            info, scopes=SCOPES
+        )
+        return build("drive", "v3", credentials=creds)
+    except Exception as e:
+        print(f"Error loading local service_account.json file: {e}")
+        raise e
 
 def extract_drive_id(url):
     """
