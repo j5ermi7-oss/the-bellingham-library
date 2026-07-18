@@ -716,6 +716,12 @@ def handle_all_incoming(message):
 def process_private_message(message):
     user_id = message.from_user.id
     
+    # HARD BLOCK FOR BANNED USERS
+    if db.is_banned(user_id):
+        # Don't even reply, just ignore them completely (or reply with a ban message)
+        bot.reply_to(message, "🚫 You are permanently banned from using this bot.")
+        return
+    
     # 1. Start command
     if message.text and message.text.startswith("/start"):
         # Check authorization
