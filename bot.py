@@ -148,17 +148,19 @@ def send_to_admin_chat(text, reply_markup=None):
         return None
 # Helper: Forward video message to admin's private DM
 def forward_video_to_admin(video_message, caption, reply_markup=None):
-    try:
-        # Send video file directly to the first owner's DM
-        return bot.send_video(
-            OWNER_IDS[0],
-            video_message.video.file_id,
-            caption=caption,
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        print(f"Failed to forward video to owner DM: {e}")
-        return None
+    success = False
+    for owner_id in OWNER_IDS:
+        try:
+            bot.send_video(
+                owner_id,
+                video_message.video.file_id,
+                caption=caption,
+                reply_markup=reply_markup
+            )
+            success = True
+        except Exception as e:
+            print(f"Failed to forward video to owner {owner_id}: {e}")
+    return success
 # Helper: Safely escape HTML characters for safe text insertion
 def safe_html(text):
     if not text:
@@ -845,16 +847,17 @@ def forward_mention_to_admin(message):
     
     prompt = f"💬 <b>Bot Mentioned by @{user} in {safe_html(chat_name)}</b>\n\n{safe_html(text)}\n\n<i>What do you suggest for an answer to this? (Reply directly to this message to answer)</i>"
     
-    try:
-        # Send directly to the Owner's private DM, not the Admin Group Chat
-        msg = bot.send_message(OWNER_IDS[0], prompt)
-        pending_ai_replies[msg.message_id] = {
-            "chat_id": message.chat.id,
-            "message_id": message.message_id,
-            "thread_id": message.message_thread_id
-        }
-    except Exception as e:
-        print(f"Failed to forward mention to admin: {e}")
+    # Send directly to all Owners' private DMs
+    for owner_id in OWNER_IDS:
+        try:
+            msg = bot.send_message(owner_id, prompt)
+            pending_ai_replies[msg.message_id] = {
+                "chat_id": message.chat.id,
+                "message_id": message.message_id,
+                "thread_id": message.message_thread_id
+            }
+        except Exception as e:
+            print(f"Failed to forward mention to owner {owner_id}: {e}")
 @bot.message_handler(func=lambda message: True, content_types=["text", "photo", "video", "document"])
 def handle_all_incoming(message):
     # Log chat IDs and thread IDs to help the owner configure their .env
