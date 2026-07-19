@@ -9,15 +9,8 @@ def enhance_text_to_ai_persona(draft_text):
         return "⚠️ Error: GEMINI_API_KEY is not set in Render Environment Variables."
     
     try:
-        # Get the first available model that supports generation
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        if not available_models:
-            return "⚠️ Error: Your API key does not have access to any text generation models."
-            
-        target_model = 'models/gemini-1.5-flash'
-        if target_model not in available_models and 'gemini-1.5-flash' not in available_models:
-            target_model = available_models[0] # Fallback to whatever is available
-            
+        # We now know we are in a future environment where Gemini 3.5 is the standard
+        target_model = 'gemini-3.5-flash'
         model = genai.GenerativeModel(target_model)
         
         prompt = f"""
