@@ -389,14 +389,15 @@ def handle_broadcast(message):
     
     markup = InlineKeyboardMarkup()
     markup.row(
-        InlineKeyboardButton("✅ Send to Announcements", callback_data=f"confirm_broadcast:{message.from_user.id}"),
-        InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{message.from_user.id}")
+        InlineKeyboardButton("✅ Announcements", callback_data=f"confirm_broadcast:ann:{message.from_user.id}"),
+        InlineKeyboardButton("✅ Access Requests", callback_data=f"confirm_broadcast:acc:{message.from_user.id}")
     )
+    markup.row(InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{message.from_user.id}"))
     
     bot.reply_to(
         message,
         f"📢 <b>Broadcast Preview:</b>\n\n{safe_html(text)}\n\n"
-        f"<i>Do you want to send this to the Announcements topic?</i>",
+        f"<i>Where do you want to send this broadcast?</i>",
         reply_markup=markup
     )
 @bot.message_handler(commands=["user", "lookup"])
@@ -634,8 +635,16 @@ def handle_callbacks(call):
                 pass
     # 4. Broadcast confirmation/cancellation
     elif data.startswith("confirm_broadcast:") or data.startswith("cancel_broadcast:"):
-        action, user_id_str = data.split(":")
-        user_id = int(user_id_str)
+        parts = data.split(":")
+        action = parts[0]
+        
+        # Format is either confirm_broadcast:target:user_id or cancel_broadcast:user_id
+        if action == "confirm_broadcast":
+            target_topic = parts[1]
+            user_id = int(parts[2])
+        else:
+            target_topic = None
+            user_id = int(parts[1])
         
         # Only the person who initiated the broadcast can confirm/cancel it
         if call.from_user.id != user_id:
@@ -655,7 +664,19 @@ def handle_callbacks(call):
             
         if action == "confirm_broadcast":
             try:
-                topic_id = int(os.getenv("ANNOUNCEMENT_THREAD_ID", 4))
+                # Determine which topic to send to
+                if target_topic == "ann":
+                    topic_id = int(os.getenv("ANNOUNCEMENT_THREAD_ID", 4))
+                    topic_name = "Announcements"
+                elif target_topic == "acc":
+                    if not ACCESS_REQUEST_THREAD_ID:
+                        raise ValueError("ACCESS_REQUEST_THREAD_ID is not set in your .env file.")
+                    topic_id = ACCESS_REQUEST_THREAD_ID
+                    topic_name = "Access Requests"
+                else:
+                    topic_id = None
+                    topic_name = "Main Chat"
+                    
                 bot.send_message(
                     ADMIN_CHAT_ID,
                     f"{safe_html(text)}",
@@ -664,7 +685,7 @@ def handle_callbacks(call):
                 bot.edit_message_text(
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
-                    text=f"✅ <b>Broadcast Sent Successfully!</b>\n\n{safe_html(text)}"
+                    text=f"✅ <b>Broadcast Sent to {topic_name}!</b>\n\n{safe_html(text)}"
                 )
                 bot.answer_callback_query(call.id, "Broadcast sent!")
             except Exception as e:
