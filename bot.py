@@ -9,6 +9,8 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 import db
 import gdrive
+import gemini
+
 # Load configuration from .env file
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -26,6 +28,13 @@ ADMIN_CHAT_ID = int(ADMIN_CHAT_ID) if ADMIN_CHAT_ID else None
 ACCESS_REQUEST_THREAD_ID = int(ACCESS_REQUEST_THREAD_ID) if ACCESS_REQUEST_THREAD_ID else None
 # Initialize bot with HTML parsing support (much safer than Markdown for usernames with underscores)
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
+
+try:
+    BOT_USERNAME = bot.get_me().username
+except Exception as e:
+    print(f"Warning: Could not fetch bot username: {e}")
+    BOT_USERNAME = ""
+
 # Email regex pattern
 EMAIL_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
 # ----------------- RENDER HEALTH CHECK SERVER -----------------
@@ -160,6 +169,7 @@ def safe_html(text):
     return html.escape(str(text))
 # ----------------- ADMIN COMMAND HANDLERS -----------------
 pending_broadcasts = {}
+pending_ai_replies = {}
 last_request_time = {}
 @bot.message_handler(commands=["auth", "authorize"])
 def handle_auth(message):
@@ -829,20 +839,61 @@ def process_broadcast_reply(message, user_id):
         bot.reply_to(message, f"❌ <b>Failed to send broadcast as reply:</b>\nCheck if the link is correct.\nError: {e}")
 # ----------------- PRIVATE DM HANDLERS (BUYERS) -----------------
 # Save user info cache on any message (especially in groups to map usernames)
+def forward_mention_to_admin(message):
+    if not ADMIN_CHAT_ID:
+        return
+    text = message.text
+    user = message.from_user.username or message.from_user.first_name
+    chat_name = message.chat.title
+    
+    prompt = f"💬 <b>Bot Mentioned by @{user} in {safe_html(chat_name)}</b>\n\n{safe_html(text)}\n\n<i>What do you suggest for an answer to this? (Reply directly to this message to answer)</i>"
+    
+    try:
+        msg = bot.send_message(ADMIN_CHAT_ID, prompt)
+        pending_ai_replies[msg.message_id] = {
+            "chat_id": message.chat.id,
+            "message_id": message.message_id,
+            "thread_id": message.message_thread_id
+        }
+    except Exception as e:
+        print(f"Failed to forward mention to admin: {e}")
+
 @bot.message_handler(func=lambda message: True, content_types=["text", "photo", "video", "document"])
 def handle_all_incoming(message):
     # Log chat IDs and thread IDs to help the owner configure their .env
     if message.chat.id == ADMIN_CHAT_ID or (message.chat.type in ["group", "supergroup"]):
         db.save_username_mapping(message.from_user.username, message.from_user.id)
-        print(f"Group/Topic Activity Log:")
-        print(f"  Chat Title: {message.chat.title}")
-        print(f"  Chat ID: {message.chat.id}")
-        print(f"  Thread ID: {message.message_thread_id}")
-        print(f"  User: {message.from_user.first_name} (@{message.from_user.username}, ID: {message.from_user.id})")
         
+    # Check if this is an admin replying to an AI ghostwriter prompt
+    if message.reply_to_message and message.reply_to_message.message_id in pending_ai_replies:
+        if message.from_user.id in OWNER_IDS:
+            target_info = pending_ai_replies.pop(message.reply_to_message.message_id)
+            draft_text = message.text or message.caption or ""
+            
+            processing_msg = bot.reply_to(message, "⏳ <i>Polishing your response with AI...</i>")
+            
+            try:
+                ai_response = gemini.enhance_text_to_ai_persona(draft_text)
+                bot.send_message(
+                    target_info["chat_id"],
+                    ai_response,
+                    message_thread_id=target_info.get("thread_id"),
+                    reply_to_message_id=target_info["message_id"]
+                )
+                bot.edit_message_text(f"✅ <b>Sent AI response:</b>\n\n{safe_html(ai_response)}", chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
+            except Exception as e:
+                bot.edit_message_text(f"❌ <b>Failed to send AI response:</b>\n{e}", chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
+            return
+
+    # Check for bot mentions in group chats
+    if message.chat.type in ["group", "supergroup"] and message.chat.id != ADMIN_CHAT_ID:
+        if message.text and BOT_USERNAME and f"@{BOT_USERNAME}" in message.text:
+            forward_mention_to_admin(message)
+
     # Standard route processing for private DMs
     if message.chat.type == "private":
         process_private_message(message)
+
 def process_private_message(message):
     user_id = message.from_user.id
     
