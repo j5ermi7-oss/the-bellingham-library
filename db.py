@@ -1,10 +1,12 @@
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import os
-# Allow DB_PATH to be overridden via environment variables (vital for cloud persistent disks)
-DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "bot_data.db"))
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set. Please set it in Render.")
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    # Neon might require sslmode=require, which is usually in the URL
+    conn = psycopg2.connect(DATABASE_URL)
     return conn
 def init_db():
     conn = get_db_connection()
@@ -14,14 +16,14 @@ def init_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS username_cache (
         username TEXT PRIMARY KEY,
-        telegram_id INTEGER NOT NULL
+        telegram_id BIGINT NOT NULL
     )
     """)
     
     # 2. Users Table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        telegram_id INTEGER PRIMARY KEY,
+        telegram_id BIGINT PRIMARY KEY,
         username TEXT,
         first_name TEXT,
         is_authorized INTEGER DEFAULT 0,
@@ -36,8 +38,8 @@ def init_db():
     # 3. Access History
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS access_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        telegram_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        telegram_id BIGINT,
         email TEXT,
         file_id TEXT,
         file_url TEXT,
@@ -59,7 +61,7 @@ def init_db():
     # 5. Blacklist
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS blacklist (
-        telegram_id INTEGER,
+        telegram_id BIGINT,
         email TEXT,
         banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -75,7 +77,11 @@ def save_username_mapping(username, telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT OR REPLACE INTO username_cache (username, telegram_id) VALUES (?, ?)",
+        """
+        INSERT INTO username_cache (username, telegram_id) 
+        VALUES (%s, %s)
+        ON CONFLICT (username) DO UPDATE SET telegram_id = EXCLUDED.telegram_id
+        """,
         (username, telegram_id)
     )
     conn.commit()
@@ -85,8 +91,8 @@ def get_id_from_username(username):
         return None
     username = username.lower().replace("@", "")
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT telegram_id FROM username_cache WHERE username = ?", (username,))
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("SELECT telegram_id FROM username_cache WHERE username = %s", (username,))
     row = cursor.fetchone()
     conn.close()
     return row["telegram_id"] if row else None
@@ -99,19 +105,19 @@ def authorize_user(telegram_id, username=None, first_name=None):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT telegram_id FROM users WHERE telegram_id = ?",
+        "SELECT telegram_id FROM users WHERE telegram_id = %s",
         (telegram_id,)
     )
     user_exists = cursor.fetchone()
     
     if user_exists:
         cursor.execute(
-            "UPDATE users SET is_authorized = 1, username = ?, first_name = ? WHERE telegram_id = ?",
+            "UPDATE users SET is_authorized = 1, username = %s, first_name = %s WHERE telegram_id = %s",
             (username, first_name, telegram_id)
         )
     else:
         cursor.execute(
-            "INSERT INTO users (telegram_id, username, first_name, is_authorized) VALUES (?, ?, ?, 1)",
+            "INSERT INTO users (telegram_id, username, first_name, is_authorized) VALUES (%s, %s, %s, 1)",
             (telegram_id, username, first_name)
         )
     conn.commit()
@@ -120,22 +126,22 @@ def unauthorize_user(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET is_authorized = 0 WHERE telegram_id = ?",
+        "UPDATE users SET is_authorized = 0 WHERE telegram_id = %s",
         (telegram_id,)
     )
     conn.commit()
     conn.close()
 def is_user_authorized(telegram_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT is_authorized FROM users WHERE telegram_id = ?", (telegram_id,))
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("SELECT is_authorized FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     conn.close()
     return bool(row["is_authorized"]) if row else False
 def get_user(telegram_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,))
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("SELECT * FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
@@ -143,7 +149,7 @@ def register_email(telegram_id, email):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET email = ? WHERE telegram_id = ?",
+        "UPDATE users SET email = %s WHERE telegram_id = %s",
         (email, telegram_id)
     )
     conn.commit()
@@ -152,19 +158,19 @@ def set_pending_email(telegram_id, pending_email):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET pending_email = ? WHERE telegram_id = ?",
+        "UPDATE users SET pending_email = %s WHERE telegram_id = %s",
         (pending_email, telegram_id)
     )
     conn.commit()
     conn.close()
 def approve_pending_email(telegram_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT pending_email FROM users WHERE telegram_id = ?", (telegram_id,))
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("SELECT pending_email FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     if row and row["pending_email"]:
         cursor.execute(
-            "UPDATE users SET email = ?, pending_email = NULL WHERE telegram_id = ?",
+            "UPDATE users SET email = %s, pending_email = NULL WHERE telegram_id = %s",
             (row["pending_email"], telegram_id)
         )
         conn.commit()
@@ -177,7 +183,7 @@ def reject_pending_email(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET pending_email = NULL WHERE telegram_id = ?",
+        "UPDATE users SET pending_email = NULL WHERE telegram_id = %s",
         (telegram_id,)
     )
     conn.commit()
@@ -185,14 +191,14 @@ def reject_pending_email(telegram_id):
 # Quota Operations
 def get_quota(telegram_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT quota_used, max_quota FROM users WHERE telegram_id = ?", (telegram_id,))
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("SELECT quota_used, max_quota FROM users WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     conn.close()
     return (row["quota_used"], row["max_quota"]) if row else (0, 3)
 def get_stats():
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     
     cursor.execute("SELECT COUNT(*) as count FROM users WHERE is_authorized = 1")
     total_authorized = cursor.fetchone()["count"]
@@ -200,14 +206,14 @@ def get_stats():
     cursor.execute("SELECT COUNT(*) as count FROM access_history")
     total_shared = cursor.fetchone()["count"]
     
-    cursor.execute("SELECT COUNT(*) as count FROM access_history WHERE granted_at >= datetime('now', '-7 days')")
+    cursor.execute("SELECT COUNT(*) as count FROM access_history WHERE granted_at >= NOW() - INTERVAL '7 days'")
     shared_7_days = cursor.fetchone()["count"]
     
     cursor.execute("""
         SELECT u.username, u.first_name, COUNT(a.id) as req_count 
         FROM access_history a
         JOIN users u ON a.telegram_id = u.telegram_id
-        GROUP BY a.telegram_id 
+        GROUP BY u.telegram_id, u.username, u.first_name
         ORDER BY req_count DESC 
         LIMIT 10
     """)
@@ -225,7 +231,7 @@ def increment_quota(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET quota_used = quota_used + 1 WHERE telegram_id = ?",
+        "UPDATE users SET quota_used = quota_used + 1 WHERE telegram_id = %s",
         (telegram_id,)
     )
     conn.commit()
@@ -234,7 +240,7 @@ def deduct_quota(telegram_id, amount):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET quota_used = quota_used + ? WHERE telegram_id = ?",
+        "UPDATE users SET quota_used = quota_used + %s WHERE telegram_id = %s",
         (amount, telegram_id)
     )
     conn.commit()
@@ -243,7 +249,7 @@ def reset_quota(telegram_id, max_quota=3):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET quota_used = 0, max_quota = ? WHERE telegram_id = ?",
+        "UPDATE users SET quota_used = 0, max_quota = %s WHERE telegram_id = %s",
         (max_quota, telegram_id)
     )
     conn.commit()
@@ -253,16 +259,16 @@ def log_access(telegram_id, email, file_id, file_url, permission_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO access_history (telegram_id, email, file_id, file_url, permission_id) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO access_history (telegram_id, email, file_id, file_url, permission_id) VALUES (%s, %s, %s, %s, %s)",
         (telegram_id, email, file_id, file_url, permission_id)
     )
     conn.commit()
     conn.close()
 def get_access_history(telegram_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute(
-        "SELECT file_id, permission_id, email FROM access_history WHERE telegram_id = ?",
+        "SELECT file_id, permission_id, email FROM access_history WHERE telegram_id = %s",
         (telegram_id,)
     )
     rows = cursor.fetchall()
@@ -271,14 +277,14 @@ def get_access_history(telegram_id):
 def clear_access_history(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM access_history WHERE telegram_id = ?", (telegram_id,))
+    cursor.execute("DELETE FROM access_history WHERE telegram_id = %s", (telegram_id,))
     conn.commit()
     conn.close()
 def get_recent_access_links(telegram_id, limit=3):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute(
-        "SELECT file_url FROM access_history WHERE telegram_id = ? ORDER BY granted_at DESC LIMIT ?",
+        "SELECT file_url FROM access_history WHERE telegram_id = %s ORDER BY granted_at DESC LIMIT %s",
         (telegram_id, limit)
     )
     rows = cursor.fetchall()
@@ -289,15 +295,19 @@ def add_public_link(file_id, file_url):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT OR REPLACE INTO public_links (file_id, file_url) VALUES (?, ?)",
+        """
+        INSERT INTO public_links (file_id, file_url) 
+        VALUES (%s, %s)
+        ON CONFLICT (file_id) DO UPDATE SET file_url = EXCLUDED.file_url
+        """,
         (file_id, file_url)
     )
     conn.commit()
     conn.close()
 def is_public_link(file_id):
     conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_id FROM public_links WHERE file_id = ?", (file_id,))
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("SELECT file_id FROM public_links WHERE file_id = %s", (file_id,))
     row = cursor.fetchone()
     conn.close()
     return row is not None
@@ -306,18 +316,18 @@ def ban_user(telegram_id, email):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO blacklist (telegram_id, email) VALUES (?, ?)",
+        "INSERT INTO blacklist (telegram_id, email) VALUES (%s, %s)",
         (telegram_id, email)
     )
     conn.commit()
     conn.close()
 def is_banned(telegram_id, email=None):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     if email:
-        cursor.execute("SELECT 1 FROM blacklist WHERE telegram_id = ? OR email = ?", (telegram_id, email))
+        cursor.execute("SELECT 1 FROM blacklist WHERE telegram_id = %s OR email = %s", (telegram_id, email))
     else:
-        cursor.execute("SELECT 1 FROM blacklist WHERE telegram_id = ?", (telegram_id,))
+        cursor.execute("SELECT 1 FROM blacklist WHERE telegram_id = %s", (telegram_id,))
     row = cursor.fetchone()
     conn.close()
     return row is not None
