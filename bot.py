@@ -837,7 +837,7 @@ def process_broadcast_reply(message, user_id):
 # ----------------- PRIVATE DM HANDLERS (BUYERS) -----------------
 # Save user info cache on any message (especially in groups to map usernames)
 def forward_mention_to_admin(message):
-    if not ADMIN_CHAT_ID:
+    if not OWNER_IDS:
         return
     text = message.text
     user = message.from_user.username or message.from_user.first_name
@@ -846,7 +846,8 @@ def forward_mention_to_admin(message):
     prompt = f"💬 <b>Bot Mentioned by @{user} in {safe_html(chat_name)}</b>\n\n{safe_html(text)}\n\n<i>What do you suggest for an answer to this? (Reply directly to this message to answer)</i>"
     
     try:
-        msg = bot.send_message(ADMIN_CHAT_ID, prompt)
+        # Send directly to the Owner's private DM, not the Admin Group Chat
+        msg = bot.send_message(OWNER_IDS[0], prompt)
         pending_ai_replies[msg.message_id] = {
             "chat_id": message.chat.id,
             "message_id": message.message_id,
