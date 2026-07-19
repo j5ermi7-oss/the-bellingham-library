@@ -929,6 +929,11 @@ def process_private_message(message):
     )
 # Start bot
 if __name__ == "__main__":
+    from keep_alive import keep_alive
+    
+    # Start the background web server to keep the bot alive on free hosts
+    keep_alive()
+    
     db.init_db()
     print("Database initialized...")
     
