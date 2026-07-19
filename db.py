@@ -230,6 +230,15 @@ def increment_quota(telegram_id):
     )
     conn.commit()
     conn.close()
+def deduct_quota(telegram_id, amount):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET quota_used = quota_used + ? WHERE telegram_id = ?",
+        (amount, telegram_id)
+    )
+    conn.commit()
+    conn.close()
 def reset_quota(telegram_id, max_quota=3):
     conn = get_db_connection()
     cursor = conn.cursor()

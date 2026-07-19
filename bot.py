@@ -344,6 +344,45 @@ def handle_grant(message):
         )
     except Exception:
         pass
+@bot.message_handler(commands=["deduct", "remove"])
+def handle_deduct(message):
+    if not is_admin(message):
+        return
+        
+    target_id, target_username, target_fname = resolve_target_user(message)
+    if not target_id:
+        bot.reply_to(
+            message,
+            "❌ Please target a user by replying to their message or specifying their ID/username.\n"
+            "Usage: `/deduct @username [amount]`"
+        )
+        return
+        
+    # Parse amount if provided
+    args = message.text.split()
+    amount = 1
+    if len(args) > 2 and args[2].isdigit():
+        amount = int(args[2])
+    elif len(args) > 1 and args[1].isdigit() and not message.reply_to_message:
+        # If user wrote /deduct 123456789 2 (not replying, ID + count)
+        if len(args) > 2 and args[2].isdigit():
+            amount = int(args[2])
+            
+    db.deduct_quota(target_id, amount)
+    
+    bot.reply_to(
+        message,
+        f"➖ Deducted <b>{amount}</b> compilation access(es) from user <b>{safe_html(target_fname)}</b> (@{safe_html(target_username or 'no_username')})."
+    )
+    
+    # Notify user
+    try:
+        bot.send_message(
+            target_id,
+            f"📉 The administrator has manually deducted <b>{amount}</b> from your remaining compilation quota."
+        )
+    except Exception:
+        pass
 @bot.message_handler(commands=["public"])
 def handle_public(message):
     if not is_admin(message):
@@ -392,7 +431,10 @@ def handle_broadcast(message):
         InlineKeyboardButton("✅ Announcements", callback_data=f"confirm_broadcast:ann:{message.from_user.id}"),
         InlineKeyboardButton("✅ Access Requests", callback_data=f"confirm_broadcast:acc:{message.from_user.id}")
     )
-    markup.row(InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{message.from_user.id}"))
+    markup.row(
+        InlineKeyboardButton("✅ General Chat", callback_data=f"confirm_broadcast:gen:{message.from_user.id}"),
+        InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{message.from_user.id}")
+    )
     
     bot.reply_to(
         message,
@@ -673,6 +715,9 @@ def handle_callbacks(call):
                         raise ValueError("ACCESS_REQUEST_THREAD_ID is not set in your .env file.")
                     topic_id = ACCESS_REQUEST_THREAD_ID
                     topic_name = "Access Requests"
+                elif target_topic == "gen":
+                    topic_id = 5
+                    topic_name = "General Chat"
                 else:
                     topic_id = None
                     topic_name = "Main Chat"
