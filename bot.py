@@ -1036,12 +1036,18 @@ def process_private_message(message):
             
             # Update values
             new_used, _ = db.get_quota(user_id)
-            bot.reply_to(
-                message,
+            remaining_quota = max_quota - new_used
+            
+            success_msg = (
                 f"✅ Access granted successfully!\n"
                 f"Drive item shared with: <code>{safe_html(user_info['email'])}</code>\n"
-                f"Remaining quota: <b>{max_quota - new_used} / {max_quota}</b>"
+                f"Remaining quota: <b>{remaining_quota} / {max_quota}</b>"
             )
+            
+            if remaining_quota <= 0:
+                success_msg += "\n\n⚠️ <b>Please send a video file of your edit now so your quota can be reset!</b>"
+                
+            bot.reply_to(message, success_msg)
         except Exception as e:
             bot.reply_to(
                 message,
