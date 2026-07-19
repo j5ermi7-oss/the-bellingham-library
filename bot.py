@@ -716,6 +716,9 @@ def handle_callbacks(call):
                     topic_id = ACCESS_REQUEST_THREAD_ID
                     topic_name = "Access Requests"
                 elif target_topic == "gen":
+                    # Put the text back so it doesn't expire before the next click
+                    pending_broadcasts[user_id] = text
+                    
                     # Instead of sending immediately, ask for reply mode
                     markup = InlineKeyboardMarkup()
                     markup.row(
