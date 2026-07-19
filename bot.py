@@ -716,8 +716,23 @@ def handle_callbacks(call):
                     topic_id = ACCESS_REQUEST_THREAD_ID
                     topic_name = "Access Requests"
                 elif target_topic == "gen":
-                    topic_id = 5
-                    topic_name = "General Chat"
+                    # Instead of sending immediately, ask for reply mode
+                    markup = InlineKeyboardMarkup()
+                    markup.row(
+                        InlineKeyboardButton("Send Default", callback_data=f"send_gen_default:{user_id}"),
+                        InlineKeyboardButton("Reply to a Message", callback_data=f"send_gen_reply:{user_id}")
+                    )
+                    markup.row(InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{user_id}"))
+                    
+                    bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text=f"📢 <b>Broadcast Preview:</b>\n\n{safe_html(text)}\n\n"
+                             f"<i>How do you want to send this to the General Chat?</i>",
+                        reply_markup=markup
+                    )
+                    bot.answer_callback_query(call.id)
+                    return
                 else:
                     topic_id = None
                     topic_name = "Main Chat"
@@ -747,6 +762,68 @@ def handle_callbacks(call):
                 text=f"❌ <b>Broadcast Cancelled.</b>"
             )
             bot.answer_callback_query(call.id, "Cancelled.")
+            
+    # 5. General Chat Broadcast Options
+    elif data.startswith("send_gen_default:") or data.startswith("send_gen_reply:"):
+        action, user_id_str = data.split(":")
+        user_id = int(user_id_str)
+        
+        if call.from_user.id != user_id:
+            bot.answer_callback_query(call.id, "You cannot confirm someone else's broadcast.", show_alert=True)
+            return
+            
+        if action == "send_gen_default":
+            text = pending_broadcasts.pop(user_id, None)
+            if not text:
+                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="❌ This broadcast has expired.")
+                return
+            try:
+                bot.send_message(ADMIN_CHAT_ID, f"{safe_html(text)}", message_thread_id=5)
+                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"✅ <b>Broadcast Sent to General Chat!</b>\n\n{safe_html(text)}")
+                bot.answer_callback_query(call.id)
+            except Exception as e:
+                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"❌ <b>Failed to send broadcast:</b>\n{e}")
+        
+        elif action == "send_gen_reply":
+            text = pending_broadcasts.get(user_id, None)
+            if not text:
+                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="❌ This broadcast has expired.")
+                return
+            
+            msg = bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="🔗 Please send me the **Message Link** from the General Chat that you want to reply to.\n\n"
+                     "*(You can get this by right-clicking the message in your Telegram group and clicking 'Copy Message Link')*\n\n"
+                     "Type /cancel to abort."
+            )
+            bot.register_next_step_handler(msg, process_broadcast_reply, user_id)
+def process_broadcast_reply(message, user_id):
+    if message.text and message.text.startswith("/"):
+        bot.reply_to(message, "Broadcast cancelled.")
+        pending_broadcasts.pop(user_id, None)
+        return
+        
+    text = pending_broadcasts.pop(user_id, None)
+    if not text:
+        bot.reply_to(message, "❌ Broadcast expired.")
+        return
+        
+    link = message.text.strip()
+    # Link format: https://t.me/c/4265920368/5/643
+    try:
+        parts = link.rstrip("/").split("/")
+        message_id = int(parts[-1])
+        
+        bot.send_message(
+            ADMIN_CHAT_ID,
+            f"{safe_html(text)}",
+            message_thread_id=5,
+            reply_to_message_id=message_id
+        )
+        bot.reply_to(message, f"✅ <b>Broadcast Sent to General Chat as a reply!</b>\n\n{safe_html(text)}")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>Failed to send broadcast as reply:</b>\nCheck if the link is correct.\nError: {e}")
 # ----------------- PRIVATE DM HANDLERS (BUYERS) -----------------
 # Save user info cache on any message (especially in groups to map usernames)
 @bot.message_handler(func=lambda message: True, content_types=["text", "photo", "video", "document"])
