@@ -186,9 +186,16 @@ def handle_auth(message):
         return
         
     db.authorize_user(target_id, target_username, target_fname)
+    bot_username = bot.get_me().username
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Get Started 🚀", url=f"https://t.me/{bot_username}?start=1"))
+    
     bot.reply_to(
         message,
-        f"✅ User <b>{safe_html(target_fname)}</b> (@{safe_html(target_username or 'no_username')}, ID: <code>{target_id}</code>) has been authorized."
+        f"✅ User <b>{safe_html(target_fname)}</b> (@{safe_html(target_username or 'no_username')}, ID: <code>{target_id}</code>) has been authorized.\n\n"
+        f"👋 Welcome to the Library, {safe_html(target_fname)}!\n"
+        f"To claim your compilations and get access, please click the button below to start our private chat.",
+        reply_markup=markup
     )
     
     # Notify user in private chat
@@ -858,6 +865,36 @@ def forward_mention_to_admin(message):
             }
         except Exception as e:
             print(f"Failed to forward mention to owner {owner_id}: {e}")
+@bot.message_handler(content_types=["new_chat_members"])
+def handle_new_member(message):
+    # Only act if this happens in the main group (Admin Chat / General Chat)
+    if message.chat.id != ADMIN_CHAT_ID and message.chat.type not in ["group", "supergroup"]:
+        return
+        
+    for new_member in message.new_chat_members:
+        if new_member.is_bot:
+            continue
+            
+        # ONLY welcome them if they are already authorized in the database
+        if not db.is_user_authorized(new_member.id):
+            continue
+            
+        # IMPORTANT: Telegram bots cannot DM users first. They MUST click a link to start the bot.
+        # So we send a welcoming message in the group with a direct button to the bot's DMs!
+        bot_username = bot.get_me().username
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Get Started 🚀", url=f"https://t.me/{bot_username}?start=1"))
+        
+        welcome_text = (
+            f"👋 Welcome to the Library, {safe_html(new_member.first_name)}!\n\n"
+            f"I am the automated manager. To claim your compilations and get access, please click the button below to start our private chat."
+        )
+        
+        try:
+            bot.reply_to(message, welcome_text, reply_markup=markup)
+        except Exception as e:
+            print(f"Failed to send welcome message: {e}")
 @bot.message_handler(func=lambda message: True, content_types=["text", "photo", "video", "document"])
 def handle_all_incoming(message):
     # Log chat IDs and thread IDs to help the owner configure their .env
