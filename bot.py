@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 import db
 import gdrive
 import gemini
-
 # Load configuration from .env file
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -28,13 +27,11 @@ ADMIN_CHAT_ID = int(ADMIN_CHAT_ID) if ADMIN_CHAT_ID else None
 ACCESS_REQUEST_THREAD_ID = int(ACCESS_REQUEST_THREAD_ID) if ACCESS_REQUEST_THREAD_ID else None
 # Initialize bot with HTML parsing support (much safer than Markdown for usernames with underscores)
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
-
 try:
     BOT_USERNAME = bot.get_me().username
 except Exception as e:
     print(f"Warning: Could not fetch bot username: {e}")
     BOT_USERNAME = ""
-
 # Email regex pattern
 EMAIL_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
 # ----------------- RENDER HEALTH CHECK SERVER -----------------
@@ -857,7 +854,6 @@ def forward_mention_to_admin(message):
         }
     except Exception as e:
         print(f"Failed to forward mention to admin: {e}")
-
 @bot.message_handler(func=lambda message: True, content_types=["text", "photo", "video", "document"])
 def handle_all_incoming(message):
     # Log chat IDs and thread IDs to help the owner configure their .env
@@ -884,16 +880,14 @@ def handle_all_incoming(message):
             except Exception as e:
                 bot.edit_message_text(f"❌ <b>Failed to send AI response:</b>\n{e}", chat_id=processing_msg.chat.id, message_id=processing_msg.message_id)
             return
-
     # Check for bot mentions in group chats
-    if message.chat.type in ["group", "supergroup"] and message.chat.id != ADMIN_CHAT_ID:
-        if message.text and BOT_USERNAME and f"@{BOT_USERNAME}" in message.text:
-            forward_mention_to_admin(message)
-
+    if message.chat.type in ["group", "supergroup"]:
+        if message.text and BOT_USERNAME:
+            if f"@{BOT_USERNAME.lower()}" in message.text.lower():
+                forward_mention_to_admin(message)
     # Standard route processing for private DMs
     if message.chat.type == "private":
         process_private_message(message)
-
 def process_private_message(message):
     user_id = message.from_user.id
     
