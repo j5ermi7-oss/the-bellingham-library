@@ -185,6 +185,15 @@ def handle_auth(message):
         )
         return
         
+    if target_id in OWNER_IDS:
+        bot.reply_to(
+            message,
+            f"👑 <b>Wait a minute...</b>\n\n"
+            f"You are targeting an Owner (<code>{target_id}</code>)!\n"
+            f"Owners inherently have infinite power and access to everything. You do not need to authorize them as a buyer."
+        )
+        return
+        
     db.authorize_user(target_id, target_username, target_fname)
     bot_username = bot.get_me().username
     markup = InlineKeyboardMarkup()
@@ -664,6 +673,15 @@ def handle_callbacks(call):
         if user_info:
             first_name = user_info["first_name"] or first_name
             username = user_info["username"] or username
+            
+        if user_id in OWNER_IDS:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"👑 <b>Hold up!</b>\n\nUser (ID: <code>{user_id}</code>) is a system Owner. They already have infinite access."
+            )
+            bot.answer_callback_query(call.id, "Owner detected. No authorization needed.")
+            return
             
         db.authorize_user(user_id, username, first_name)
         
