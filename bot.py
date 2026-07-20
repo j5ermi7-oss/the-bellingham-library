@@ -345,6 +345,11 @@ def handle_grant(message):
         if len(args) > 2 and args[2].isdigit():
             quota_limit = int(args[2])
             
+    msg = bot.reply_to(message, "📝 Please reply with the **reason** for granting this quota (or type 'skip' to skip):")
+    bot.register_next_step_handler(msg, process_grant_reason, target_id, target_username, target_fname, quota_limit)
+
+def process_grant_reason(message, target_id, target_username, target_fname, quota_limit):
+    reason = message.text
     db.reset_quota(target_id, quota_limit)
     
     bot.reply_to(
@@ -354,9 +359,10 @@ def handle_grant(message):
     
     # Notify user
     try:
+        reason_text = f"\n\nℹ️ <b>Reason:</b> {safe_html(reason)}" if reason.lower() != 'skip' else ""
         bot.send_message(
             target_id,
-            f"🎁 The administrator has reset your access quota! You can now request up to <b>{quota_limit}</b> more compilations."
+            f"🎁 The administrator has reset your access quota! You can now request up to <b>{quota_limit}</b> more compilations.{reason_text}"
         )
     except Exception:
         pass
@@ -384,6 +390,11 @@ def handle_deduct(message):
         if len(args) > 2 and args[2].isdigit():
             amount = int(args[2])
             
+    msg = bot.reply_to(message, "📝 Please reply with the **reason** for deducting this quota (or type 'skip' to skip):")
+    bot.register_next_step_handler(msg, process_deduct_reason, target_id, target_username, target_fname, amount)
+
+def process_deduct_reason(message, target_id, target_username, target_fname, amount):
+    reason = message.text
     db.deduct_quota(target_id, amount)
     
     bot.reply_to(
@@ -393,9 +404,10 @@ def handle_deduct(message):
     
     # Notify user
     try:
+        reason_text = f"\n\nℹ️ <b>Reason:</b> {safe_html(reason)}" if reason.lower() != 'skip' else ""
         bot.send_message(
             target_id,
-            f"📉 The administrator has manually deducted <b>{amount}</b> from your remaining compilation quota."
+            f"📉 The administrator has manually deducted <b>{amount}</b> from your remaining compilation quota.{reason_text}"
         )
     except Exception:
         pass
@@ -1091,11 +1103,9 @@ def process_private_message(message):
         except Exception as e:
             bot.reply_to(
                 message,
-                f"❌ Failed to grant access to your Google Drive email.\n"
-                f"Error details: <code>{safe_html(str(e))}</code>\n\n"
-                f"💡 <b>Steps to fix:</b>\n"
-                f"1. Make sure you share the compilation folder with the bot's Service Account email.\n"
-                f"2. Check if your registered email <code>{safe_html(user_info['email'])}</code> is a valid Google account."
+                f"❌ <b>Access Request Failed</b>\n\n"
+                f"The compilation you requested isn't featured in our Drive. It is either that, or the compilation doesn't belong to our library at all.\n\n"
+                f"Please ensure you are copying the link directly from the provided library list."
             )
         return
     # 4. Video upload for quota reset
