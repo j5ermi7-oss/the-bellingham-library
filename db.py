@@ -274,6 +274,24 @@ def get_access_history(telegram_id):
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+    
+def has_user_requested_file(telegram_id, file_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM access_history WHERE telegram_id = %s AND file_id = %s",
+        (telegram_id, file_id)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+def get_all_authorized_users():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT telegram_id FROM users WHERE is_authorized = 1")
+    rows = cursor.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
 def clear_access_history(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()

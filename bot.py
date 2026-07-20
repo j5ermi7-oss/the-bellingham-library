@@ -347,7 +347,6 @@ def handle_grant(message):
             
     msg = bot.reply_to(message, "📝 Please reply with the **reason** for granting this quota (or type 'skip' to skip):")
     bot.register_next_step_handler(msg, process_grant_reason, target_id, target_username, target_fname, quota_limit)
-
 def process_grant_reason(message, target_id, target_username, target_fname, quota_limit):
     reason = message.text
     db.reset_quota(target_id, quota_limit)
@@ -392,7 +391,6 @@ def handle_deduct(message):
             
     msg = bot.reply_to(message, "📝 Please reply with the **reason** for deducting this quota (or type 'skip' to skip):")
     bot.register_next_step_handler(msg, process_deduct_reason, target_id, target_username, target_fname, amount)
-
 def process_deduct_reason(message, target_id, target_username, target_fname, amount):
     reason = message.text
     db.deduct_quota(target_id, amount)
@@ -461,8 +459,9 @@ def handle_broadcast(message):
     )
     markup.row(
         InlineKeyboardButton("✅ General Chat", callback_data=f"confirm_broadcast:gen:{message.from_user.id}"),
-        InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{message.from_user.id}")
+        InlineKeyboardButton("📨 DM All Buyers", callback_data=f"confirm_broadcast:dms:{message.from_user.id}")
     )
+    markup.row(InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{message.from_user.id}"))
     
     bot.reply_to(
         message,
@@ -764,6 +763,23 @@ def handle_callbacks(call):
                     )
                     bot.answer_callback_query(call.id)
                     return
+                elif target_topic == "dms":
+                    authorized_users = db.get_all_authorized_users()
+                    success_count = 0
+                    for uid in authorized_users:
+                        try:
+                            bot.send_message(uid, f"{safe_html(text)}")
+                            success_count += 1
+                        except Exception:
+                            pass
+                    
+                    bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text=f"✅ <b>Broadcast Sent to {success_count} Buyers via DM!</b>\n\n{safe_html(text)}"
+                    )
+                    bot.answer_callback_query(call.id, f"Sent to {success_count} users!")
+                    return
                 else:
                     topic_id = None
                     topic_name = "Main Chat"
@@ -1047,6 +1063,15 @@ def process_private_message(message):
                 message,
                 "ℹ️ This compilation has already been sent for free in our teasers! "
                 "You don't need the bot's help this time. Enjoy! (Your quota was not charged.)"
+            )
+            return
+            
+        # Check if already requested previously
+        if db.has_user_requested_file(user_id, file_id):
+            bot.reply_to(
+                message,
+                "ℹ️ You have already requested access to this compilation previously! "
+                "You can still access it. (Your quota was not charged again)."
             )
             return
             
