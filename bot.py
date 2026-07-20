@@ -1015,10 +1015,15 @@ def process_private_message(message):
         if not old_email:
             # First time registering email
             db.register_email(user_id, new_email)
+            
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("❓ Help & FAQs", callback_data="faq_menu_main"))
+            
             bot.reply_to(
                 message,
                 f"✅ Email registered successfully as <code>{safe_html(new_email)}</code>!\n"
-                "Now you can send Google Drive compilation links to get access."
+                "Now you can send Google Drive compilation links to get access.",
+                reply_markup=markup
             )
         else:
             # Attempting to change email
