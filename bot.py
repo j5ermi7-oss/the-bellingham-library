@@ -170,6 +170,32 @@ def safe_html(text):
 pending_broadcasts = {}
 pending_ai_replies = {}
 last_request_time = {}
+@bot.message_handler(commands=["refresh_menu"])
+def handle_refresh_menu(message):
+    if message.from_user.id not in OWNER_IDS:
+        return
+        
+    try:
+        admin_commands = [
+            telebot.types.BotCommand("auth", "Authorize a user"),
+            telebot.types.BotCommand("grant", "Grant quota to user"),
+            telebot.types.BotCommand("deduct", "Deduct quota from user"),
+            telebot.types.BotCommand("revoke", "Revoke user access"),
+            telebot.types.BotCommand("public", "Mark a link as public teaser"),
+            telebot.types.BotCommand("broadcast", "Send a broadcast"),
+            telebot.types.BotCommand("user", "Lookup a user"),
+            telebot.types.BotCommand("kick", "Kick from group & revoke"),
+            telebot.types.BotCommand("ban", "Ban user permanently")
+        ]
+        
+        bot.set_my_commands(admin_commands, scope=telebot.types.BotCommandScopeChat(message.chat.id))
+        
+        if ADMIN_CHAT_ID:
+            bot.set_my_commands(admin_commands, scope=telebot.types.BotCommandScopeChatAdministrators(ADMIN_CHAT_ID))
+            
+        bot.reply_to(message, "✅ <b>Menu Forcefully Injected!</b>\n\nI just explicitly pinged the Telegram API to inject the commands directly into this chat. If it still doesn't appear, you may need to type `/` and wait a few seconds, or Telegram desktop might require a full restart.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>API Failed:</b>\n<code>{e}</code>")
 @bot.message_handler(commands=["auth", "authorize"])
 def handle_auth(message):
     if not is_admin(message):
