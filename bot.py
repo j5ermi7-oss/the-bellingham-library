@@ -580,11 +580,78 @@ def handle_new_members(message):
 # ----------------- CALLBACK BUTTON HANDLER -----------------
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
+    data = call.data
+    
+    # 6. FAQ Menu Navigation (Accessible to ALL users)
+    if data.startswith("faq_menu_"):
+        page = data.split("faq_menu_")[1]
+        
+        if page == "main":
+            text = (
+                "❓ <b>Help & Frequently Asked Questions</b>\n\n"
+                "Welcome to the FAQ menu! What do you need help with?"
+            )
+            markup = InlineKeyboardMarkup()
+            markup.row(InlineKeyboardButton("How everything works", callback_data="faq_menu_general"))
+            markup.row(InlineKeyboardButton("How to claim access", callback_data="faq_menu_quota"))
+            markup.row(InlineKeyboardButton("How to submit an edit", callback_data="faq_menu_edit"))
+            markup.row(InlineKeyboardButton("How to change email", callback_data="faq_menu_email"))
+            markup.row(InlineKeyboardButton("🔙 Close FAQ", callback_data="faq_menu_close"))
+        elif page == "general":
+            text = (
+                "📖 <b>How Everything Works</b>\n\n"
+                "Welcome to the Bellingham Library! I am your automated manager.\n\n"
+                "You have purchased a specific number of 'Access Quotas'. Each quota allows you to permanently unlock one Google Drive compilation folder.\n\n"
+                "When your quota hits 0, you must submit a video edit to prove you are actively using our resources. "
+                "If the administrators approve your edit, your quota will be completely reset and you can request more compilations!"
+            )
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🔙 Back to FAQ", callback_data="faq_menu_main"))
+        elif page == "quota":
+            text = (
+                "📊 <b>How to claim access</b>\n\n"
+                "1. Copy the Google Drive link of the compilation you want.\n"
+                "2. Send the link directly to me here in our private chat.\n"
+                "3. I will automatically share the folder with your registered email and deduct 1 from your quota!"
+            )
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🔙 Back to FAQ", callback_data="faq_menu_main"))
+        elif page == "edit":
+            text = (
+                "🎬 <b>How to submit an edit</b>\n\n"
+                "Once your quota reaches 0, you must submit a video edit to prove you are using the compilations.\n\n"
+                "Simply send the <b>video file</b> directly to me. I will forward it to the administrator for review. "
+                "Once approved, your quota will be completely reset!"
+            )
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🔙 Back to FAQ", callback_data="faq_menu_main"))
+        elif page == "email":
+            text = (
+                "📧 <b>How to change your email</b>\n\n"
+                "If you entered the wrong email or want to use a different Google account, "
+                "just send the new email address to me right here.\n\n"
+                "Your request will be sent to the admin for approval. Once approved, your new email will be registered."
+            )
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🔙 Back to FAQ", callback_data="faq_menu_main"))
+        elif page == "close":
+            try:
+                bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            except Exception:
+                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="FAQ Closed.")
+            return
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=text,
+            reply_markup=markup
+        )
+        bot.answer_callback_query(call.id)
+        return
+    # All other buttons require admin permissions
     if not is_callback_admin(call):
         bot.answer_callback_query(call.id, "❌ You do not have administrator permissions.", show_alert=True)
         return
-        
-    data = call.data
     
     # 1. Authorize User from join card
     if data.startswith("auth_user:"):
