@@ -985,11 +985,15 @@ def process_private_message(message):
             )
         else:
             quota_used, max_quota = db.get_quota(user_id)
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("❓ Help & FAQs", callback_data="faq_menu_main"))
+            
             bot.reply_to(
                 message,
                 f"Welcome back! Send me a Google Drive compilation link to get access.\n\n"
                 f"📧 Registered Email: <code>{safe_html(user_info['email'])}</code>\n"
-                f"📊 Quota Used: <b>{quota_used} / {max_quota}</b>"
+                f"📊 Quota Used: <b>{quota_used} / {max_quota}</b>",
+                reply_markup=markup
             )
         return
     # Check authorization for any other DMs
