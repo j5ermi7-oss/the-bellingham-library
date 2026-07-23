@@ -118,14 +118,33 @@ def share_file_or_folder(file_id, email, role="reader"):
         print(f"Unexpected error during share: {error}")
         raise error
 
-def revoke_file_or_folder(file_id, permission_id):
+def revoke_file_or_folder(file_id, permission_id, email=None):
     """
     Revokes access to a Google Drive file or folder using the permission_id.
+    If permission_id is missing, looks it up using the email address.
     Returns: True on success, False or raises on failure.
     """
     service = get_drive_service()
     
     try:
+        # If we don't have a permission_id, we must find it
+        if not permission_id and email:
+            print(f"Looking up permission ID for {email} on {file_id}")
+            permissions = service.permissions().list(
+                fileId=file_id,
+                fields="permissions(id, emailAddress)",
+                supportsAllDrives=True
+            ).execute()
+            
+            for p in permissions.get('permissions', []):
+                if p.get('emailAddress', '').lower() == email.lower():
+                    permission_id = p.get('id')
+                    break
+                    
+        if not permission_id:
+            print(f"Could not find permission ID for {email} to revoke.")
+            return False
+            
         service.permissions().delete(
             fileId=file_id,
             permissionId=permission_id,

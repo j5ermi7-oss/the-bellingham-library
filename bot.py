@@ -477,13 +477,17 @@ def handle_revoke_email(message):
         file_url = record.get("file_url", "Unknown Link")
         
         try:
-            gdrive.revoke_access(file_id, perm_id)
-            revoked_count += 1
-            links.append(f"🔗 <a href='{file_url}'>Compilation Link</a>")
+            success = gdrive.revoke_file_or_folder(file_id, perm_id, email=email)
+            if success:
+                revoked_count += 1
+                links.append(f"🔗 <a href='{file_url}'>Compilation Link</a>")
+            else:
+                failed_count += 1
+                links.append(f"❌ <a href='{file_url}'>Failed to Revoke (Not found)</a>")
         except Exception as e:
             print(f"Failed to revoke {file_id} for {email}: {e}")
             failed_count += 1
-            links.append(f"❌ <a href='{file_url}'>Failed to Revoke</a>")
+            links.append(f"❌ <a href='{file_url}'>Failed to Revoke (Error)</a>")
             
     db.clear_access_history_by_email(email)
     
