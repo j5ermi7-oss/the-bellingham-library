@@ -468,19 +468,30 @@ def handle_revoke_email(message):
     revoked_count = 0
     failed_count = 0
     
+    # Store links to show the admin
+    links = []
+    
     for record in history:
         file_id = record["file_id"]
         perm_id = record["permission_id"]
+        file_url = record.get("file_url", "Unknown Link")
         
         try:
             gdrive.revoke_access(file_id, perm_id)
             revoked_count += 1
+            links.append(f"🔗 <a href='{file_url}'>Compilation Link</a>")
         except Exception as e:
             print(f"Failed to revoke {file_id} for {email}: {e}")
             failed_count += 1
+            links.append(f"❌ <a href='{file_url}'>Failed to Revoke</a>")
             
     db.clear_access_history_by_email(email)
     
+    # Format the list of links (limit to 30 to avoid Telegram character limits)
+    links_text = "\n".join(links[:30])
+    if len(links) > 30:
+        links_text += f"\n...and {len(links) - 30} more."
+        
     bot.edit_message_text(
         chat_id=status_msg.chat.id,
         message_id=status_msg.message_id,
@@ -488,7 +499,10 @@ def handle_revoke_email(message):
              f"Email: <code>{safe_html(email)}</code>\n"
              f"Files Revoked: <b>{revoked_count}</b>\n"
              f"Failed: <b>{failed_count}</b>\n\n"
-             f"All matching records have been wiped from the database."
+             f"<b>Requested Compilations:</b>\n"
+             f"{links_text}\n\n"
+             f"All matching records have been wiped from the database.",
+        disable_web_page_preview=True
     )
 
 @bot.message_handler(commands=["public"])
