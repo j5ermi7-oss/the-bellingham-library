@@ -278,13 +278,27 @@ def get_access_history_by_email(email):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute(
-        "SELECT file_id, permission_id, telegram_id FROM access_history WHERE email = %s",
+        "SELECT file_id, file_url, permission_id, telegram_id FROM access_history WHERE email = %s",
         (email,)
     )
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
     
+def get_users_by_file_id(file_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("""
+        SELECT a.email, a.granted_at, u.telegram_id, u.username, u.first_name
+        FROM access_history a
+        JOIN users u ON a.telegram_id = u.telegram_id
+        WHERE a.file_id = %s
+        ORDER BY a.granted_at DESC
+    """, (file_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
 def has_user_requested_file(telegram_id, file_id):
     conn = get_db_connection()
     cursor = conn.cursor()

@@ -185,6 +185,7 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("public", "Mark a link as public teaser"),
             telebot.types.BotCommand("broadcast", "Send a broadcast"),
             telebot.types.BotCommand("user", "Lookup a user"),
+            telebot.types.BotCommand("whohas", "List users with access to a link"),
             telebot.types.BotCommand("kick", "Kick from group & revoke"),
             telebot.types.BotCommand("ban", "Ban user permanently")
         ]
@@ -509,6 +510,47 @@ def handle_revoke_email(message):
         disable_web_page_preview=True,
         parse_mode="HTML"
     )
+
+@bot.message_handler(commands=["whohas"])
+def handle_whohas(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Usage: `/whohas [google_drive_link]`")
+        return
+        
+    link = args[1]
+    file_id, item_type = gdrive.extract_drive_id(link)
+    
+    if not file_id:
+        bot.reply_to(message, "❌ Invalid Google Drive URL.")
+        return
+        
+    users = db.get_users_by_file_id(file_id)
+    
+    if not users:
+        bot.reply_to(message, f"ℹ️ The database shows that **no one** has requested this compilation through the bot.")
+        return
+        
+    lines = [f"🕵️‍♂️ <b>Leak Detective Report</b>", f"File ID: <code>{file_id}</code>", f"Total Granted: <b>{len(users)}</b>\n"]
+    
+    for u in users:
+        t_id = u["telegram_id"]
+        uname = f"@{u['username']}" if u["username"] else "No Username"
+        fname = u["first_name"] or "Unknown"
+        email = u["email"]
+        date_str = u["granted_at"].strftime("%Y-%m-%d %H:%M") if u.get("granted_at") else "Unknown Date"
+        
+        lines.append(f"• <b>{safe_html(fname)}</b> ({safe_html(uname)})\n  └ 📧 <code>{safe_html(email)}</code>\n  └ 📅 {date_str} (ID: <code>{t_id}</code>)")
+        
+    # Split message if it exceeds Telegram's 4096 character limit
+    full_text = "\n".join(lines)
+    
+    # Send in chunks if necessary
+    for i in range(0, len(full_text), 4000):
+        bot.reply_to(message, full_text[i:i+4000])
 
 @bot.message_handler(commands=["public"])
 def handle_public(message):
