@@ -186,6 +186,7 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("broadcast", "Send a broadcast"),
             telebot.types.BotCommand("user", "Lookup a user"),
             telebot.types.BotCommand("whohas", "List users with access to a link"),
+            telebot.types.BotCommand("strike", "Give a user a warning strike"),
             telebot.types.BotCommand("kick", "Kick from group & revoke"),
             telebot.types.BotCommand("ban", "Ban user permanently")
         ]
@@ -447,6 +448,82 @@ def process_deduct_reason(message, target_id, target_username, target_fname, amo
     except Exception:
         pass
         
+@bot.message_handler(commands=["strike"])
+def handle_strike(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split(maxsplit=2)
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Usage: `/strike [user_id/username] [optional_reason]`")
+        return
+        
+    target = args[1]
+    reason = args[2] if len(args) > 2 else "Suspicious Activity"
+    
+    target_id, target_username, target_fname = resolve_target_user(message, custom_target=target)
+    if not target_id:
+        bot.reply_to(message, "❌ Could not resolve user.")
+        return
+        
+    if target_id in OWNER_IDS:
+        bot.reply_to(message, "❌ You cannot strike an Owner.")
+        return
+        
+    strikes = db.add_strike(target_id)
+    
+    if strikes < 3:
+        bot.reply_to(message, f"⚠️ <b>Strike Added</b>\nUser: <b>{safe_html(target_fname)}</b> (ID: <code>{target_id}</code>)\nTotal Strikes: <b>{strikes}/3</b>\nReason: {safe_html(reason)}")
+        try:
+            bot.send_message(
+                target_id, 
+                f"⚠️ <b>WARNING: You have received a strike from the Administrators.</b>\n\n"
+                f"Reason: <i>{safe_html(reason)}</i>\n\n"
+                f"You currently have <b>{strikes}/3</b> strikes. If you reach 3 strikes, you will be permanently banned and lose access to all compilations."
+            )
+        except Exception:
+            pass
+    else:
+        # 3 Strikes - Guillotine Protocol
+        bot.reply_to(message, f"🚨 <b>GUILLOTINE PROTOCOL ACTIVATED</b> 🚨\n\nUser: <b>{safe_html(target_fname)}</b> (ID: <code>{target_id}</code>) has reached 3 strikes.\n\nExecuting permanent ban and total access wipe...")
+        
+        # 1. Revoke access from GDrive
+        user_info = db.get_user(target_id)
+        email = user_info["email"]
+        if email:
+            history = db.get_access_history_by_email(email)
+            for record in history:
+                file_id = record["file_id"]
+                perm_id = record["permission_id"]
+                try:
+                    gdrive.revoke_file_or_folder(file_id, perm_id, email=email)
+                except Exception:
+                    pass
+            db.clear_access_history_by_email(email)
+            
+        # 2. Ban from bot
+        db.ban_user(target_id, email, reason=f"3 Strikes: {reason}")
+        
+        # 3. Try to kick from group if admin chat exists
+        if ADMIN_CHAT_ID:
+            try:
+                bot.ban_chat_member(ADMIN_CHAT_ID, target_id)
+                bot.unban_chat_member(ADMIN_CHAT_ID, target_id) # Kicks them without permanently banning from the chat
+            except Exception:
+                pass
+                
+        # 4. Notify user
+        try:
+            bot.send_message(
+                target_id,
+                f"🚫 <b>You have received your 3rd strike and have been permanently banned.</b>\n\n"
+                f"All your Google Drive access has been revoked and your account is locked."
+            )
+        except Exception:
+            pass
+            
+        bot.send_message(message.chat.id, f"✅ <b>Guillotine Execution Complete</b>\nUser {target_id} has been completely wiped from the library.")
+
 @bot.message_handler(commands=["revoke_email"])
 def handle_revoke_email(message):
     if not is_admin(message):

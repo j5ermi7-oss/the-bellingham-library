@@ -35,6 +35,16 @@ def init_db():
     )
     """)
     
+    # Safe migration: add strikes column if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN strikes INTEGER DEFAULT 0")
+    except psycopg2.errors.DuplicateColumn:
+        conn.rollback() # Ignore if already exists
+    except Exception as e:
+        conn.rollback()
+    else:
+        conn.commit()
+    
     # 3. Access History
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS access_history (
@@ -270,6 +280,27 @@ def reset_quota(telegram_id, max_quota=3):
     )
     conn.commit()
     conn.close()
+    
+def add_strike(telegram_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET strikes = strikes + 1 WHERE telegram_id = %s RETURNING strikes",
+        (telegram_id,)
+    )
+    result = cursor.fetchone()
+    conn.commit()
+    conn.close()
+    return result[0] if result else 0
+
+def get_strikes(telegram_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("SELECT strikes FROM users WHERE telegram_id = %s", (telegram_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row["strikes"] if row else 0
+
 # Access History Operations
 def log_access(telegram_id, email, file_id, file_url, permission_id):
     conn = get_db_connection()
