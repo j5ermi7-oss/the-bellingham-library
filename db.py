@@ -1,5 +1,6 @@
 import psycopg2
 import psycopg2.extras
+from psycopg2 import errors
 import os
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -38,7 +39,7 @@ def init_db():
     # Safe migration: add strikes column if it doesn't exist
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN strikes INTEGER DEFAULT 0")
-    except psycopg2.errors.DuplicateColumn:
+    except errors.DuplicateColumn:
         conn.rollback() # Ignore if already exists
     except Exception as e:
         conn.rollback()
