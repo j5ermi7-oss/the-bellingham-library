@@ -538,12 +538,25 @@ def handle_whohas(message):
     
     for u in users:
         t_id = u["telegram_id"]
-        uname = f"@{u['username']}" if u["username"] else "No Username"
-        fname = u["first_name"] or "Unknown"
+        uname = u["username"]
+        fname = u["first_name"]
         email = u["email"]
         date_str = u["granted_at"].strftime("%Y-%m-%d %H:%M") if u.get("granted_at") else "Unknown Date"
         
-        lines.append(f"• <b>{safe_html(fname)}</b> ({safe_html(uname)})\n  └ 📧 <code>{safe_html(email)}</code>\n  └ 📅 {date_str} (ID: <code>{t_id}</code>)")
+        # Clean up defaults
+        if fname == "User" or fname == "Unknown":
+            fname = None
+            
+        if fname and uname:
+            display_name = f"<b>{safe_html(fname)}</b> (@{safe_html(uname)})"
+        elif fname:
+            display_name = f"<b>{safe_html(fname)}</b>"
+        elif uname:
+            display_name = f"<b>@{safe_html(uname)}</b>"
+        else:
+            display_name = f"<b>Unknown User</b>"
+            
+        lines.append(f"• {display_name}\n  └ 📧 <code>{safe_html(email)}</code>\n  └ 📅 {date_str} (ID: <code>{t_id}</code>)")
         
     # Split message if it exceeds Telegram's 4096 character limit
     full_text = "\n".join(lines)
