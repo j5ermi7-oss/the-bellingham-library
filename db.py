@@ -272,6 +272,16 @@ def get_access_history(telegram_id):
         (telegram_id,)
     )
     rows = cursor.fetchall()
+    return [dict(row) for row in rows]
+    
+def get_access_history_by_email(email):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute(
+        "SELECT file_id, permission_id, telegram_id FROM access_history WHERE email = %s",
+        (email,)
+    )
+    rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
     
@@ -296,6 +306,13 @@ def clear_access_history(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM access_history WHERE telegram_id = %s", (telegram_id,))
+    conn.commit()
+    conn.close()
+    
+def clear_access_history_by_email(email):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM access_history WHERE email = %s", (email,))
     conn.commit()
     conn.close()
 def get_recent_access_links(telegram_id, limit=3):

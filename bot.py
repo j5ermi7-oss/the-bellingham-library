@@ -181,6 +181,7 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("grant", "Grant quota to user"),
             telebot.types.BotCommand("deduct", "Deduct quota from user"),
             telebot.types.BotCommand("revoke", "Revoke user access"),
+            telebot.types.BotCommand("revoke_email", "Revoke access by email"),
             telebot.types.BotCommand("public", "Mark a link as public teaser"),
             telebot.types.BotCommand("broadcast", "Send a broadcast"),
             telebot.types.BotCommand("user", "Lookup a user"),
@@ -444,6 +445,52 @@ def process_deduct_reason(message, target_id, target_username, target_fname, amo
         )
     except Exception:
         pass
+        
+@bot.message_handler(commands=["revoke_email"])
+def handle_revoke_email(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Usage: `/revoke_email [email]`")
+        return
+        
+    email = args[1].lower().strip()
+    history = db.get_access_history_by_email(email)
+    
+    if not history:
+        bot.reply_to(message, f"ℹ️ No access records found for email: <code>{safe_html(email)}</code>")
+        return
+        
+    status_msg = bot.reply_to(message, f"⏳ <b>Revoking {len(history)} files</b> from <code>{safe_html(email)}</code>...\nThis may take a moment.")
+    
+    revoked_count = 0
+    failed_count = 0
+    
+    for record in history:
+        file_id = record["file_id"]
+        perm_id = record["permission_id"]
+        
+        try:
+            gdrive.revoke_access(file_id, perm_id)
+            revoked_count += 1
+        except Exception as e:
+            print(f"Failed to revoke {file_id} for {email}: {e}")
+            failed_count += 1
+            
+    db.clear_access_history_by_email(email)
+    
+    bot.edit_message_text(
+        chat_id=status_msg.chat.id,
+        message_id=status_msg.message_id,
+        text=f"✅ <b>Revoke Email Complete</b>\n\n"
+             f"Email: <code>{safe_html(email)}</code>\n"
+             f"Files Revoked: <b>{revoked_count}</b>\n"
+             f"Failed: <b>{failed_count}</b>\n\n"
+             f"All matching records have been wiped from the database."
+    )
+
 @bot.message_handler(commands=["public"])
 def handle_public(message):
     if not is_admin(message):
