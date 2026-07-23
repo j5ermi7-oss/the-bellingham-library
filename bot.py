@@ -506,7 +506,8 @@ def handle_revoke_email(message):
              f"<b>Requested Compilations:</b>\n"
              f"{links_text}\n\n"
              f"All matching records have been wiped from the database.",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
+        parse_mode="HTML"
     )
 
 @bot.message_handler(commands=["public"])
