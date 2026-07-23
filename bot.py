@@ -1161,6 +1161,13 @@ def handle_all_incoming(message):
     if message.chat.id == ADMIN_CHAT_ID or (message.chat.type in ["group", "supergroup"]):
         db.save_username_mapping(message.from_user.username, message.from_user.id)
         
+    # Silently update their profile in the database if they interact with the bot
+    db.update_user_profile(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name
+    )
+        
     # Check if this is an admin replying to an AI ghostwriter prompt
     if message.reply_to_message and message.reply_to_message.message_id in pending_ai_replies:
         if message.from_user.id in OWNER_IDS:

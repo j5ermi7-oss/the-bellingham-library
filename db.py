@@ -131,6 +131,22 @@ def unauthorize_user(telegram_id):
     )
     conn.commit()
     conn.close()
+
+def update_user_profile(telegram_id, username=None, first_name=None):
+    if username:
+        username = username.lower().replace("@", "")
+        save_username_mapping(username, telegram_id)
+        
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Only update if the user exists in the database
+    cursor.execute(
+        "UPDATE users SET username = COALESCE(%s, username), first_name = COALESCE(%s, first_name) WHERE telegram_id = %s",
+        (username, first_name, telegram_id)
+    )
+    conn.commit()
+    conn.close()
 def is_user_authorized(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
