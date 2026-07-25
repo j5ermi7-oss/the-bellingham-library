@@ -461,7 +461,7 @@ def handle_strike(message):
     target = args[1]
     reason = args[2] if len(args) > 2 else "Suspicious Activity"
     
-    target_id, target_username, target_fname = resolve_target_user(message, custom_target=target)
+    target_id, target_username, target_fname = resolve_target_user(message)
     if not target_id:
         bot.reply_to(message, "❌ Could not resolve user.")
         return
