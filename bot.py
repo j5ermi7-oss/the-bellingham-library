@@ -185,11 +185,12 @@ def handle_refresh_menu(message):
     try:
         # Buyers get their own menu
         buyer_commands = [
-            telebot.types.BotCommand("trending", "Top 5 requested compilations")
+            telebot.types.BotCommand("trending", "Top 15 requested compilations")
         ]
         bot.set_my_commands(buyer_commands) # Default scope for regular users
         
         admin_commands = [
+            telebot.types.BotCommand("trending", "Top 15 requested compilations"),
             telebot.types.BotCommand("auth", "Authorize a user"),
             telebot.types.BotCommand("grant", "Grant quota to user"),
             telebot.types.BotCommand("deduct", "Deduct quota from user"),
@@ -473,12 +474,12 @@ def handle_trending(message):
     loading_msg = bot.reply_to(message, "⏳ <i>Calculating the most requested compilations...</i>")
     
     try:
-        trending = db.get_trending_comps(limit=5)
+        trending = db.get_trending_comps(limit=15)
         if not trending:
             bot.edit_message_text("No compilations have been requested yet!", chat_id=message.chat.id, message_id=loading_msg.message_id)
             return
             
-        text = "🔥 <b>TOP 5 MOST REQUESTED COMPILATIONS</b> 🔥\n\n"
+        text = "🔥 <b>TOP 15 MOST REQUESTED COMPILATIONS</b> 🔥\n\n"
         for i, item in enumerate(trending):
             file_id = item["file_id"]
             count = item["request_count"]
