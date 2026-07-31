@@ -36,15 +36,21 @@ def init_db():
     )
     """)
     
-    # Safe migration: add strikes column if it doesn't exist
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN strikes INTEGER DEFAULT 0")
-    except errors.DuplicateColumn:
-        conn.rollback() # Ignore if already exists
-    except Exception as e:
-        conn.rollback()
-    else:
-        conn.commit()
+    # Safe migrations
+    try: cursor.execute("ALTER TABLE users ADD COLUMN strikes INTEGER DEFAULT 0")
+    except errors.DuplicateColumn: conn.rollback()
+    except Exception: conn.rollback()
+    else: conn.commit()
+        
+    try: cursor.execute("ALTER TABLE users ADD COLUMN zero_quota_at TIMESTAMP")
+    except errors.DuplicateColumn: conn.rollback()
+    except Exception: conn.rollback()
+    else: conn.commit()
+        
+    try: cursor.execute("ALTER TABLE users ADD COLUMN reminder_sent INTEGER DEFAULT 0")
+    except errors.DuplicateColumn: conn.rollback()
+    except Exception: conn.rollback()
+    else: conn.commit()
     
     # 3. Access History
     cursor.execute("""
@@ -172,6 +178,7 @@ def get_user(telegram_id):
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
 def register_email(telegram_id, email):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -181,6 +188,47 @@ def register_email(telegram_id, email):
     )
     conn.commit()
     conn.close()
+def grant_quota(telegram_id, amount):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE users 
+        SET max_quota = max_quota + %s, zero_quota_at = NULL, reminder_sent = 0
+        WHERE telegram_id = %s
+        """,
+        (amount, telegram_id)
+    )
+    conn.commit()
+    conn.close()
+
+def get_users_due_for_reminder(hours=24):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    # Get users who hit zero quota at least 'hours' ago and haven't been reminded
+    cursor.execute(
+        """
+        SELECT telegram_id FROM users 
+        WHERE zero_quota_at IS NOT NULL 
+        AND reminder_sent = 0 
+        AND zero_quota_at <= CURRENT_TIMESTAMP - INTERVAL '%s hours'
+        """,
+        (hours,)
+    )
+    results = [row["telegram_id"] for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+def mark_reminder_sent(telegram_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET reminder_sent = 1 WHERE telegram_id = %s",
+        (telegram_id,)
+    )
+    conn.commit()
+    conn.close()
+
 def set_pending_email(telegram_id, pending_email):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -258,25 +306,43 @@ def increment_quota(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET quota_used = quota_used + 1 WHERE telegram_id = %s",
+        """
+        UPDATE users 
+        SET quota_used = quota_used + 1,
+            zero_quota_at = CASE WHEN quota_used + 1 >= max_quota THEN CURRENT_TIMESTAMP ELSE zero_quota_at END,
+            reminder_sent = CASE WHEN quota_used + 1 >= max_quota THEN 0 ELSE reminder_sent END
+        WHERE telegram_id = %s
+        """,
         (telegram_id,)
     )
     conn.commit()
     conn.close()
+
 def deduct_quota(telegram_id, amount):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET quota_used = quota_used + %s WHERE telegram_id = %s",
-        (amount, telegram_id)
+        """
+        UPDATE users 
+        SET quota_used = quota_used + %s,
+            zero_quota_at = CASE WHEN quota_used + %s >= max_quota THEN CURRENT_TIMESTAMP ELSE zero_quota_at END,
+            reminder_sent = CASE WHEN quota_used + %s >= max_quota THEN 0 ELSE reminder_sent END
+        WHERE telegram_id = %s
+        """,
+        (amount, amount, amount, telegram_id)
     )
     conn.commit()
     conn.close()
+
 def reset_quota(telegram_id, max_quota=3):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET quota_used = 0, max_quota = %s WHERE telegram_id = %s",
+        """
+        UPDATE users 
+        SET quota_used = 0, max_quota = %s, zero_quota_at = NULL, reminder_sent = 0
+        WHERE telegram_id = %s
+        """,
         (max_quota, telegram_id)
     )
     conn.commit()
@@ -303,6 +369,27 @@ def get_strikes(telegram_id):
     return row["strikes"] if row else 0
 
 # Access History Operations
+def get_trending_comps(limit=5):
+    """
+    Returns the top requested compilations.
+    Returns: list of dicts with 'file_id', 'file_url', 'request_count'
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute(
+        """
+        SELECT file_id, file_url, COUNT(*) as request_count 
+        FROM access_history 
+        GROUP BY file_id, file_url 
+        ORDER BY request_count DESC 
+        LIMIT %s
+        """,
+        (limit,)
+    )
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
 def log_access(telegram_id, email, file_id, file_url, permission_id):
     conn = get_db_connection()
     cursor = conn.cursor()

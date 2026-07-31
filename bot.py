@@ -175,23 +175,29 @@ def handle_refresh_menu(message):
     if message.from_user.id not in OWNER_IDS:
         return
         
-    try:
-        admin_commands = [
-            telebot.types.BotCommand("auth", "Authorize a user"),
-            telebot.types.BotCommand("grant", "Grant quota to user"),
-            telebot.types.BotCommand("deduct", "Deduct quota from user"),
-            telebot.types.BotCommand("revoke", "Revoke user access"),
-            telebot.types.BotCommand("revoke_email", "Revoke access by email"),
-            telebot.types.BotCommand("public", "Mark a link as public teaser"),
-            telebot.types.BotCommand("broadcast", "Send a broadcast"),
-            telebot.types.BotCommand("user", "Lookup a user"),
-            telebot.types.BotCommand("whohas", "List users with access to a link"),
-            telebot.types.BotCommand("strike", "Give a user a warning strike"),
-            telebot.types.BotCommand("kick", "Kick from group & revoke"),
-            telebot.types.BotCommand("ban", "Ban user permanently")
-        ]
-        
-        bot.set_my_commands(admin_commands, scope=telebot.types.BotCommandScopeChat(message.chat.id))
+        try:
+            # Buyers get their own menu
+            buyer_commands = [
+                telebot.types.BotCommand("trending", "Top 5 requested compilations")
+            ]
+            bot.set_my_commands(buyer_commands) # Default scope for regular users
+            
+            admin_commands = [
+                telebot.types.BotCommand("auth", "Authorize a user"),
+                telebot.types.BotCommand("grant", "Grant quota to user"),
+                telebot.types.BotCommand("deduct", "Deduct quota from user"),
+                telebot.types.BotCommand("revoke", "Revoke user access"),
+                telebot.types.BotCommand("revoke_email", "Revoke access by email"),
+                telebot.types.BotCommand("public", "Mark a link as public teaser"),
+                telebot.types.BotCommand("broadcast", "Send a broadcast"),
+                telebot.types.BotCommand("user", "Lookup a user"),
+                telebot.types.BotCommand("whohas", "List users with access to a link"),
+                telebot.types.BotCommand("strike", "Give a user a warning strike"),
+                telebot.types.BotCommand("kick", "Kick from group & revoke"),
+                telebot.types.BotCommand("ban", "Ban user permanently")
+            ]
+            
+            bot.set_my_commands(admin_commands, scope=telebot.types.BotCommandScopeChat(message.chat.id))
         
         if ADMIN_CHAT_ID:
             bot.set_my_commands(admin_commands, scope=telebot.types.BotCommandScopeChatAdministrators(ADMIN_CHAT_ID))
@@ -448,6 +454,48 @@ def process_deduct_reason(message, target_id, target_username, target_fname, amo
     except Exception:
         pass
         
+trending_name_cache = {}
+
+@bot.message_handler(commands=["trending", "top"])
+def handle_trending(message):
+    user_id = message.from_user.id
+    if not db.is_user_authorized(user_id):
+        bot.reply_to(message, "❌ You are not authorized to use this bot.")
+        return
+        
+    loading_msg = bot.reply_to(message, "⏳ <i>Calculating the most requested compilations...</i>")
+    
+    try:
+        trending = db.get_trending_comps(limit=5)
+        if not trending:
+            bot.edit_message_text("No compilations have been requested yet!", chat_id=message.chat.id, message_id=loading_msg.message_id)
+            return
+            
+        text = "🔥 <b>TOP 5 MOST REQUESTED COMPILATIONS</b> 🔥\n\n"
+        for i, item in enumerate(trending):
+            file_id = item["file_id"]
+            count = item["request_count"]
+            link = item["file_url"]
+            
+            if file_id not in trending_name_cache:
+                name = gdrive.get_file_name(file_id)
+                trending_name_cache[file_id] = name
+                
+            name = trending_name_cache[file_id]
+            
+            medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+            medal = medals[i] if i < len(medals) else "🏅"
+            
+            text += f"{medal} <b>{safe_html(name)}</b>\n"
+            text += f"📊 <i>Requested {count} times</i>\n"
+            text += f"🔗 <a href='{link}'>Request Access</a>\n\n"
+            
+        text += "<i>(Tap a link and send it to me to instantly get access!)</i>"
+        
+        bot.edit_message_text(text, chat_id=message.chat.id, message_id=loading_msg.message_id, disable_web_page_preview=True)
+    except Exception as e:
+        bot.edit_message_text(f"❌ Failed to load trending list: {e}", chat_id=message.chat.id, message_id=loading_msg.message_id)
+
 @bot.message_handler(commands=["strike"])
 def handle_strike(message):
     if not is_admin(message):
@@ -1518,6 +1566,27 @@ if __name__ == "__main__":
     
     # Start Health Check Server in a background thread
     threading.Thread(target=run_health_check_server, daemon=True).start()
+    
+    def reminder_loop():
+        while True:
+            try:
+                users_to_remind = db.get_users_due_for_reminder(hours=24)
+                for user_id in users_to_remind:
+                    try:
+                        bot.send_message(
+                            user_id,
+                            "⏰ <b>Auto-Reminder:</b>\n\n"
+                            "Hey! Just a reminder, you are out of quota. Have you finished your edit? "
+                            "Submit your video here to get your quota back!"
+                        )
+                        db.mark_reminder_sent(user_id)
+                    except Exception as e:
+                        pass
+            except Exception as e:
+                pass
+            time.sleep(3600) # Check every 1 hour
+            
+    threading.Thread(target=reminder_loop, daemon=True).start()
     
     print("Starting Telegram Bot polling...")
     bot.infinity_polling()
