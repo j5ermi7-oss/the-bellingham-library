@@ -72,6 +72,19 @@ def extract_drive_id(url):
         
     return None, None
 
+def get_file_name(file_id):
+    """
+    Fetches the name of a Google Drive file or folder.
+    Returns: file_name (str) or "Unknown File" on failure.
+    """
+    try:
+        service = get_drive_service()
+        file = service.files().get(fileId=file_id, fields="name", supportsAllDrives=True).execute()
+        return file.get("name", "Unknown File")
+    except Exception as e:
+        print(f"Failed to get file name for {file_id}: {e}")
+        return "Unknown File"
+
 def share_file_or_folder(file_id, email, role="reader"):
     """
     Shares a Google Drive file or folder with the specified email.

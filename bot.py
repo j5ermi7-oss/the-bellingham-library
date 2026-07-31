@@ -1431,6 +1431,7 @@ def process_private_message(message):
         # Grant Google Drive permission
         try:
             permission_id = gdrive.share_file_or_folder(file_id, user_info["email"])
+            file_name = gdrive.get_file_name(file_id)
             
             # Log in database
             db.log_access(user_id, user_info["email"], file_id, message.text, permission_id)
@@ -1441,9 +1442,10 @@ def process_private_message(message):
             remaining_quota = max_quota - new_used
             
             success_msg = (
-                f"✅ Access granted successfully!\n"
-                f"Drive item shared with: <code>{safe_html(user_info['email'])}</code>\n"
-                f"Remaining quota: <b>{remaining_quota} / {max_quota}</b>"
+                f"✅ Access granted successfully!\n\n"
+                f"📁 <b>Item:</b> {safe_html(file_name)}\n"
+                f"📧 <b>Shared with:</b> <code>{safe_html(user_info['email'])}</code>\n"
+                f"📊 <b>Remaining quota:</b> <b>{remaining_quota} / {max_quota}</b>"
             )
             
             if remaining_quota <= 0:
