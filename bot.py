@@ -192,6 +192,7 @@ def handle_refresh_menu(message):
         admin_commands = [
             telebot.types.BotCommand("trending", "Top 15 requested compilations"),
             telebot.types.BotCommand("auth", "Authorize a user"),
+            telebot.types.BotCommand("whohas_rank", "Lookup users by trending rank"),
             telebot.types.BotCommand("grant", "Grant quota to user"),
             telebot.types.BotCommand("deduct", "Deduct quota from user"),
             telebot.types.BotCommand("revoke", "Revoke user access"),
@@ -503,6 +504,60 @@ def handle_trending(message):
         bot.edit_message_text(text, chat_id=message.chat.id, message_id=loading_msg.message_id, disable_web_page_preview=True)
     except Exception as e:
         bot.edit_message_text(f"❌ Failed to load trending list: {e}", chat_id=message.chat.id, message_id=loading_msg.message_id)
+
+@bot.message_handler(commands=["whohas_rank"])
+def handle_whohas_rank(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        bot.reply_to(message, "❌ Usage: `/whohas_rank [1-15]`\nExample: `/whohas_rank 3`")
+        return
+        
+    rank = int(args[1])
+    if rank < 1 or rank > 15:
+        bot.reply_to(message, "❌ Please specify a rank between 1 and 15.")
+        return
+        
+    loading_msg = bot.reply_to(message, f"⏳ <i>Fetching users for Rank #{rank}...</i>")
+    
+    try:
+        trending = db.get_trending_comps(limit=15)
+        if not trending or rank > len(trending):
+            bot.edit_message_text(f"❌ There are only {len(trending)} trending compilations right now.", chat_id=message.chat.id, message_id=loading_msg.message_id)
+            return
+            
+        item = trending[rank - 1]
+        file_id = item["file_id"]
+        
+        # We can safely use cache or get_file_name
+        if file_id in trending_name_cache:
+            file_name = trending_name_cache[file_id]
+        else:
+            file_name = gdrive.get_file_name(file_id)
+            trending_name_cache[file_id] = file_name
+            
+        users = db.get_users_by_file_id(file_id)
+        if not users:
+            bot.edit_message_text("ℹ️ No users found for this compilation.", chat_id=message.chat.id, message_id=loading_msg.message_id)
+            return
+            
+        response = f"🔍 <b>Users who requested Rank #{rank}:</b>\n"
+        response += f"📁 <b>{safe_html(file_name)}</b>\n\n"
+        
+        for i, u in enumerate(users[:30]):  # Limit to 30 to avoid huge messages hitting Telegram limit
+            date_str = u["granted_at"].strftime("%Y-%m-%d %H:%M") if hasattr(u["granted_at"], "strftime") else str(u["granted_at"])
+            response += f"👤 <b>{safe_html(u['first_name'])}</b> (@{safe_html(u['username'] or 'None')})\n"
+            response += f"🆔 <code>{u['telegram_id']}</code> | ✉️ <code>{safe_html(u['email'])}</code>\n"
+            response += f"📅 <i>{date_str}</i>\n\n"
+            
+        if len(users) > 30:
+            response += f"<i>...and {len(users) - 30} more.</i>"
+            
+        bot.edit_message_text(response, chat_id=message.chat.id, message_id=loading_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"❌ Failed to load users: {e}", chat_id=message.chat.id, message_id=loading_msg.message_id)
 
 @bot.message_handler(commands=["strike"])
 def handle_strike(message):
