@@ -146,20 +146,27 @@ def send_to_admin_chat(text, reply_markup=None):
     except Exception as e:
         print(f"Failed to send to admin chat: {e}")
         return None
+pending_edit_messages = {}
+
 # Helper: Forward video message to admin's private DM
-def forward_video_to_admin(video_message, caption, reply_markup=None):
+def forward_video_to_admin(video_message, caption, reply_markup=None, buyer_id=None):
     success = False
+    sent_msgs = {}
     for owner_id in OWNER_IDS:
         try:
-            bot.send_video(
+            msg = bot.send_video(
                 owner_id,
                 video_message.video.file_id,
                 caption=caption,
                 reply_markup=reply_markup
             )
+            sent_msgs[owner_id] = msg.message_id
             success = True
         except Exception as e:
             print(f"Failed to forward video to owner {owner_id}: {e}")
+            
+    if buyer_id and sent_msgs:
+        pending_edit_messages[buyer_id] = sent_msgs
     return success
 # Helper: Safely escape HTML characters for safe text insertion
 def safe_html(text):
@@ -175,29 +182,29 @@ def handle_refresh_menu(message):
     if message.from_user.id not in OWNER_IDS:
         return
         
-        try:
-            # Buyers get their own menu
-            buyer_commands = [
-                telebot.types.BotCommand("trending", "Top 5 requested compilations")
-            ]
-            bot.set_my_commands(buyer_commands) # Default scope for regular users
-            
-            admin_commands = [
-                telebot.types.BotCommand("auth", "Authorize a user"),
-                telebot.types.BotCommand("grant", "Grant quota to user"),
-                telebot.types.BotCommand("deduct", "Deduct quota from user"),
-                telebot.types.BotCommand("revoke", "Revoke user access"),
-                telebot.types.BotCommand("revoke_email", "Revoke access by email"),
-                telebot.types.BotCommand("public", "Mark a link as public teaser"),
-                telebot.types.BotCommand("broadcast", "Send a broadcast"),
-                telebot.types.BotCommand("user", "Lookup a user"),
-                telebot.types.BotCommand("whohas", "List users with access to a link"),
-                telebot.types.BotCommand("strike", "Give a user a warning strike"),
-                telebot.types.BotCommand("kick", "Kick from group & revoke"),
-                telebot.types.BotCommand("ban", "Ban user permanently")
-            ]
-            
-            bot.set_my_commands(admin_commands, scope=telebot.types.BotCommandScopeChat(message.chat.id))
+    try:
+        # Buyers get their own menu
+        buyer_commands = [
+            telebot.types.BotCommand("trending", "Top 5 requested compilations")
+        ]
+        bot.set_my_commands(buyer_commands) # Default scope for regular users
+        
+        admin_commands = [
+            telebot.types.BotCommand("auth", "Authorize a user"),
+            telebot.types.BotCommand("grant", "Grant quota to user"),
+            telebot.types.BotCommand("deduct", "Deduct quota from user"),
+            telebot.types.BotCommand("revoke", "Revoke user access"),
+            telebot.types.BotCommand("revoke_email", "Revoke access by email"),
+            telebot.types.BotCommand("public", "Mark a link as public teaser"),
+            telebot.types.BotCommand("broadcast", "Send a broadcast"),
+            telebot.types.BotCommand("user", "Lookup a user"),
+            telebot.types.BotCommand("whohas", "List users with access to a link"),
+            telebot.types.BotCommand("strike", "Give a user a warning strike"),
+            telebot.types.BotCommand("kick", "Kick from group & revoke"),
+            telebot.types.BotCommand("ban", "Ban user permanently")
+        ]
+        
+        bot.set_my_commands(admin_commands, scope=telebot.types.BotCommandScopeChat(message.chat.id))
         
         if ADMIN_CHAT_ID:
             bot.set_my_commands(admin_commands, scope=telebot.types.BotCommandScopeChatAdministrators(ADMIN_CHAT_ID))
@@ -1022,6 +1029,16 @@ def handle_callbacks(call):
     elif data.startswith("approve_edit:") or data.startswith("reject_edit:"):
         action, user_id_str = data.split(":")
         user_id = int(user_id_str)
+        
+        # When handled by one owner, delete from other owners
+        sent_msgs = pending_edit_messages.pop(user_id, {})
+        for owner_id, msg_id in sent_msgs.items():
+            if owner_id != call.from_user.id:
+                try:
+                    bot.delete_message(owner_id, msg_id)
+                except Exception:
+                    pass
+                    
         user_info = db.get_user(user_id)
         
         if not user_info:
@@ -1537,7 +1554,7 @@ def process_private_message(message):
             InlineKeyboardButton("Reject Edit", callback_data=f"reject_edit:{user_id}")
         )
         
-        forward_video_to_admin(message, caption, reply_markup=markup)
+        forward_video_to_admin(message, caption, reply_markup=markup, buyer_id=user_id)
         
         bot.reply_to(
             message,
