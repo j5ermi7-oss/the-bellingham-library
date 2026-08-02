@@ -5,7 +5,7 @@ import threading
 import html
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReactionTypeEmoji
 from dotenv import load_dotenv
 import db
 import gdrive
@@ -193,6 +193,7 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("trending", "Top 15 requested compilations"),
             telebot.types.BotCommand("auth", "Authorize a user"),
             telebot.types.BotCommand("whohas_rank", "Lookup users by trending rank"),
+            telebot.types.BotCommand("react", "React to a message with emoji"),
             telebot.types.BotCommand("grant", "Grant quota to user"),
             telebot.types.BotCommand("deduct", "Deduct quota from user"),
             telebot.types.BotCommand("revoke", "Revoke user access"),
@@ -558,6 +559,74 @@ def handle_whohas_rank(message):
         bot.edit_message_text(response, chat_id=message.chat.id, message_id=loading_msg.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Failed to load users: {e}", chat_id=message.chat.id, message_id=loading_msg.message_id)
+
+def parse_telegram_message_link(link):
+    link = link.strip().rstrip("/")
+    # Private group pattern: https://t.me/c/1234567890/123 or https://t.me/c/1234567890/5/123
+    m_private = re.match(r"^https?://t\.me/c/(\d+)(?:/\d+)?/(\d+)$", link)
+    if m_private:
+        internal_id = m_private.group(1)
+        msg_id = int(m_private.group(2))
+        chat_id = int(f"-100{internal_id}")
+        return chat_id, msg_id
+        
+    # Public group pattern: https://t.me/group_name/123
+    m_public = re.match(r"^https?://t\.me/([a-zA-Z0-9_]+)/(\d+)$", link)
+    if m_public:
+        group_username = m_public.group(1)
+        msg_id = int(m_public.group(2))
+        return f"@{group_username}", msg_id
+        
+    return None, None
+
+@bot.message_handler(commands=["react"])
+def handle_react(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    
+    # Case 1: Replying directly to a message: /react <emoji>
+    if message.reply_to_message:
+        if len(args) < 2:
+            bot.reply_to(message, "❌ Usage: Reply to a message with `/react <emoji>`\nExample: `/react 🔥`")
+            return
+        emoji = args[1].strip()
+        target_chat_id = message.chat.id
+        target_msg_id = message.reply_to_message.message_id
+    # Case 2: Link provided: /react <link> <emoji> or /react <emoji> <link>
+    else:
+        if len(args) < 3:
+            bot.reply_to(
+                message,
+                "❌ <b>Usage:</b>\n"
+                "• <code>/react &lt;message_link&gt; &lt;emoji&gt;</code>\n"
+                "• Or reply directly to any message with <code>/react &lt;emoji&gt;</code>\n\n"
+                "<b>Example:</b>\n"
+                "<code>/react https://t.me/c/4265920368/5/643 🔥</code>"
+            )
+            return
+            
+        arg1, arg2 = args[1].strip(), args[2].strip()
+        if "t.me" in arg1:
+            link, emoji = arg1, arg2
+        elif "t.me" in arg2:
+            link, emoji = arg2, arg1
+        else:
+            bot.reply_to(message, "❌ Could not find a valid Telegram message link in your command.")
+            return
+            
+        target_chat_id, target_msg_id = parse_telegram_message_link(link)
+        if not target_chat_id or not target_msg_id:
+            bot.reply_to(message, "❌ Invalid Telegram message link format.")
+            return
+            
+    try:
+        reaction = [ReactionTypeEmoji(emoji)]
+        bot.set_message_reaction(chat_id=target_chat_id, message_id=target_msg_id, reaction=reaction)
+        bot.reply_to(message, f"✅ Reacted with {emoji} to message <code>{target_msg_id}</code>!")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Failed to set reaction:\n<code>{e}</code>")
 
 @bot.message_handler(commands=["strike"])
 def handle_strike(message):
