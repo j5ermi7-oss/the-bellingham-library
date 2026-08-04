@@ -7,6 +7,7 @@ import time
 import io
 import csv
 import datetime
+import difflib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReactionTypeEmoji
 from dotenv import load_dotenv
@@ -184,6 +185,63 @@ def safe_html(text):
     if not text:
         return ""
     return html.escape(str(text))
+
+# Dictionary of all known bot commands & descriptions for typo detection
+COMMAND_MAP = {
+    "start": "Check quota, email, and main options",
+    "trending": "Top 15 most requested compilations",
+    "pending": "View pending video edit review queue",
+    "audit": "Full security dossier on a user",
+    "auth": "Authorize a user",
+    "whohas_rank": "Lookup buyers who requested comps by trending rank",
+    "react": "React to a message with emoji",
+    "grant": "Grant quota to user",
+    "deduct": "Deduct quota from user",
+    "revoke": "Revoke user access and files",
+    "revoke_email": "Revoke access by email",
+    "public": "Mark a link as public teaser in DB",
+    "changepublic": "Make GDrive link public & mark it in DB",
+    "nukelink": "Emergency revoke all access to a link across all buyers",
+    "export": "Download CSV backup of all buyers",
+    "broadcast": "Send a broadcast announcement",
+    "user": "Lookup a user profile",
+    "whohas": "List buyers who claimed a link",
+    "strike": "Give a user a warning strike",
+    "kick": "Kick from group and revoke files",
+    "ban": "Ban and blacklist user permanently",
+    "stats": "View bot statistics and leaderboard",
+    "refresh_menu": "Force update Telegram command menu",
+    "help": "Open Help & FAQ menu",
+    "faq": "Open Help & FAQ menu"
+}
+
+def detect_and_suggest_command(user_text):
+    if not user_text:
+        return None
+    raw = user_text.strip().lower()
+    token = raw[1:].split()[0] if raw.startswith("/") else raw.split()[0]
+    token = re.sub(r'[^a-z0-9_]', '', token)
+    if not token:
+        return None
+        
+    # 1. Exact match
+    if token in COMMAND_MAP:
+        return token
+        
+    # 2. Prefix matching (first 3-5 letters)
+    prefix_len = min(len(token), 5)
+    if prefix_len >= 3:
+        prefix = token[:prefix_len]
+        for cmd in COMMAND_MAP:
+            if cmd.startswith(prefix) or prefix.startswith(cmd[:3]):
+                return cmd
+                
+    # 3. Fuzzy matching via difflib
+    matches = difflib.get_close_matches(token, list(COMMAND_MAP.keys()), n=1, cutoff=0.5)
+    if matches:
+        return matches[0]
+        
+    return None
 # ----------------- ADMIN COMMAND HANDLERS -----------------
 pending_broadcasts = {}
 pending_ai_replies = {}
@@ -1762,6 +1820,18 @@ def handle_all_incoming(message):
         if message.text and BOT_USERNAME:
             if f"@{BOT_USERNAME.lower()}" in message.text.lower():
                 forward_mention_to_admin(message)
+                return
+        # If user typed an unrecognized slash command in group, try to suggest correct one
+        if message.text and message.text.startswith("/"):
+            suggestion = detect_and_suggest_command(message.text)
+            if suggestion:
+                desc = COMMAND_MAP.get(suggestion, "")
+                bot.reply_to(
+                    message,
+                    f"🤔 <b>Command not found. Did you mean:</b> <code>/{suggestion}</code>?\n"
+                    f"<i>{safe_html(desc)}</i>"
+                )
+                return
     # Standard route processing for private DMs
     if message.chat.type == "private":
         process_private_message(message)
@@ -1989,14 +2059,30 @@ def process_private_message(message):
             "You will be notified as soon as it is approved or rejected!"
         )
         return
-    # Catch-all reply for private DMs
+    # Smart Typo Detection & Auto-Correction
+    user_input = message.text.strip() if message.text else ""
+    suggestion = detect_and_suggest_command(user_input) if user_input else None
+    
+    if suggestion:
+        desc = COMMAND_MAP.get(suggestion, "")
+        bot.reply_to(
+            message,
+            f"🤔 <b>Did you mean:</b> <code>/{suggestion}</code>?\n"
+            f"<i>{safe_html(desc)}</i>\n\n"
+            f"💡 Tap <code>/{suggestion}</code> to use it."
+        )
+        return
+        
+    # Clean fallback for unrecognized input
+    input_preview = safe_html(user_input[:40]) if user_input else "file"
     bot.reply_to(
         message,
-        "❓ I didn't quite understand that.\n\n"
-        "💡 <b>How to use me:</b>\n"
-        "- Send a valid email address to register/change your email.\n"
-        "- Send a Google Drive file/folder link to request access.\n"
-        "- If your quota is reached, upload your video edit file to reset it."
+        f"❓ <b>Unrecognized input:</b> <code>{input_preview}</code>\n\n"
+        f"💡 <b>What would you like to do?</b>\n"
+        f"• Send a <b>Google Drive link</b> to claim a comp\n"
+        f"• Send an <b>Email address</b> to register or update it\n"
+        f"• Upload a <b>Video file</b> to reset your quota\n"
+        f"• Tap <code>/start</code> or <code>/trending</code> for options"
     )
 # Start bot
 if __name__ == "__main__":
