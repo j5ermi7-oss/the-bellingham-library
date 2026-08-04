@@ -403,10 +403,11 @@ def get_access_history(telegram_id):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute(
-        "SELECT file_id, permission_id, email FROM access_history WHERE telegram_id = %s",
+        "SELECT file_id, file_url, permission_id, email, granted_at FROM access_history WHERE telegram_id = %s ORDER BY granted_at DESC",
         (telegram_id,)
     )
     rows = cursor.fetchall()
+    conn.close()
     return [dict(row) for row in rows]
     
 def get_access_history_by_email(email):
@@ -424,7 +425,7 @@ def get_users_by_file_id(file_id):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     cursor.execute("""
-        SELECT a.email, a.granted_at, u.telegram_id, u.username, u.first_name
+        SELECT a.email, a.permission_id, a.file_url, a.granted_at, u.telegram_id, u.username, u.first_name
         FROM access_history a
         JOIN users u ON a.telegram_id = u.telegram_id
         WHERE a.file_id = %s
@@ -464,6 +465,31 @@ def clear_access_history_by_email(email):
     cursor.execute("DELETE FROM access_history WHERE email = %s", (email,))
     conn.commit()
     conn.close()
+
+def clear_access_history_by_file_id(file_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM access_history WHERE file_id = %s", (file_id,))
+    conn.commit()
+    conn.close()
+
+def get_all_users_export():
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("""
+        SELECT u.telegram_id, u.username, u.first_name, u.email, u.pending_email,
+               u.quota_used, u.max_quota, u.is_authorized, u.strikes,
+               COUNT(a.id) as total_comps_claimed
+        FROM users u
+        LEFT JOIN access_history a ON u.telegram_id = a.telegram_id
+        WHERE u.is_authorized = 1
+        GROUP BY u.telegram_id, u.username, u.first_name, u.email, u.pending_email,
+                 u.quota_used, u.max_quota, u.is_authorized, u.strikes
+        ORDER BY u.telegram_id ASC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 def get_recent_access_links(telegram_id, limit=3):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)

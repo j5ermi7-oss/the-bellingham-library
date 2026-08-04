@@ -4,6 +4,9 @@ import telebot
 import threading
 import html
 import time
+import io
+import csv
+import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReactionTypeEmoji
 from dotenv import load_dotenv
@@ -147,6 +150,7 @@ def send_to_admin_chat(text, reply_markup=None):
         print(f"Failed to send to admin chat: {e}")
         return None
 pending_edit_messages = {}
+pending_edits_queue = {}
 
 # Helper: Forward video message to admin's private DM
 def forward_video_to_admin(video_message, caption, reply_markup=None, buyer_id=None):
@@ -167,6 +171,13 @@ def forward_video_to_admin(video_message, caption, reply_markup=None, buyer_id=N
             
     if buyer_id and sent_msgs:
         pending_edit_messages[buyer_id] = sent_msgs
+        pending_edits_queue[buyer_id] = {
+            "user_id": buyer_id,
+            "username": video_message.from_user.username,
+            "first_name": video_message.from_user.first_name,
+            "submitted_at": time.time(),
+            "messages": sent_msgs
+        }
     return success
 # Helper: Safely escape HTML characters for safe text insertion
 def safe_html(text):
@@ -191,7 +202,9 @@ def handle_refresh_menu(message):
         
         admin_commands = [
             telebot.types.BotCommand("trending", "Top 15 requested compilations"),
+            telebot.types.BotCommand("pending", "View pending edit video queue"),
             telebot.types.BotCommand("auth", "Authorize a user"),
+            telebot.types.BotCommand("audit", "Full forensic dossier on a user"),
             telebot.types.BotCommand("whohas_rank", "Lookup users by trending rank"),
             telebot.types.BotCommand("react", "React to a message with emoji"),
             telebot.types.BotCommand("grant", "Grant quota to user"),
@@ -200,6 +213,8 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("revoke_email", "Revoke access by email"),
             telebot.types.BotCommand("public", "Mark a link as public teaser"),
             telebot.types.BotCommand("changepublic", "Make GDrive link public & mark it"),
+            telebot.types.BotCommand("nukelink", "Emergency revoke all access to a link"),
+            telebot.types.BotCommand("export", "Download CSV backup of all buyers"),
             telebot.types.BotCommand("broadcast", "Send a broadcast"),
             telebot.types.BotCommand("user", "Lookup a user"),
             telebot.types.BotCommand("whohas", "List users with access to a link"),
@@ -1010,6 +1025,232 @@ def handle_stats(message):
     )
     
     bot.reply_to(message, text)
+
+@bot.message_handler(commands=["nukelink", "nuke_link"])
+def handle_nukelink(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    link = None
+    if message.reply_to_message and message.reply_to_message.text:
+        extracted = gdrive.extract_drive_id(message.reply_to_message.text)
+        if extracted[0]:
+            link = message.reply_to_message.text
+    if not link and len(args) >= 2:
+        link = args[1]
+        
+    if not link:
+        bot.reply_to(
+            message,
+            "❌ <b>Usage:</b>\n"
+            "• <code>/nukelink &lt;google_drive_link&gt;</code>\n"
+            "• Or reply directly to a message containing a link with <code>/nukelink</code>"
+        )
+        return
+        
+    file_id, item_type = gdrive.extract_drive_id(link)
+    if not file_id:
+        bot.reply_to(message, "❌ Invalid Google Drive URL.")
+        return
+        
+    file_name = gdrive.get_file_name(file_id)
+    users = db.get_users_by_file_id(file_id)
+    
+    if not users:
+        bot.reply_to(message, f"ℹ️ No buyers currently have access records for <b>{safe_html(file_name)}</b>.")
+        return
+        
+    status_msg = bot.reply_to(
+        message, 
+        f"☢️ <b>Nuking Access for {len(users)} Buyers</b> on <b>{safe_html(file_name)}</b>...\n"
+        f"Revoking Google Drive permissions and clearing database records."
+    )
+    
+    revoked_count = 0
+    failed_count = 0
+    
+    for u in users:
+        perm_id = u.get("permission_id")
+        email = u.get("email")
+        try:
+            success = gdrive.revoke_file_or_folder(file_id, perm_id, email=email)
+            if success:
+                revoked_count += 1
+            else:
+                failed_count += 1
+        except Exception as e:
+            print(f"Failed to revoke {file_id} for {email}: {e}")
+            failed_count += 1
+            
+    db.clear_access_history_by_file_id(file_id)
+    
+    bot.edit_message_text(
+        f"☢️ <b>Link Nuke Complete!</b>\n\n"
+        f"📁 <b>Item:</b> <code>{safe_html(file_name)}</code>\n"
+        f"🔗 <b>File ID:</b> <code>{file_id}</code>\n"
+        f"✅ <b>Successfully Revoked:</b> {revoked_count} buyers\n"
+        f"⚠️ <b>Failed / Not Found:</b> {failed_count}\n\n"
+        f"All access history for this compilation has been wiped from the database.",
+        chat_id=status_msg.chat.id,
+        message_id=status_msg.message_id
+    )
+
+@bot.message_handler(commands=["audit"])
+def handle_audit(message):
+    if not is_admin(message):
+        return
+        
+    target_id, target_username, target_fname = resolve_target_user(message)
+    if not target_id:
+        bot.reply_to(
+            message,
+            "❌ <b>Usage:</b>\n"
+            "• <code>/audit &lt;@username / user_id&gt;</code>\n"
+            "• Or reply to a user's message with <code>/audit</code>"
+        )
+        return
+        
+    user_info = db.get_user(target_id)
+    if not user_info:
+        bot.reply_to(message, f"❌ User <code>{target_id}</code> not found in the database.")
+        return
+        
+    history = db.get_access_history(target_id)
+    strikes = user_info.get("strikes", 0)
+    quota_used = user_info.get("quota_used", 0)
+    max_quota = user_info.get("max_quota", 3)
+    is_auth = "✅ Active" if user_info.get("is_authorized") else "🚫 Revoked / Not Authorized"
+    email = user_info.get("email") or "None"
+    pending_email = user_info.get("pending_email")
+    banned = "🚨 YES (BLACKLISTED)" if db.is_banned(target_id, email) else "No"
+    
+    total_comps = len(history)
+    first_claimed = "N/A"
+    last_claimed = "N/A"
+    if history:
+        last_claimed_date = history[0]["granted_at"]
+        first_claimed_date = history[-1]["granted_at"]
+        last_claimed = last_claimed_date.strftime("%Y-%m-%d %H:%M") if hasattr(last_claimed_date, "strftime") else str(last_claimed_date)
+        first_claimed = first_claimed_date.strftime("%Y-%m-%d %H:%M") if hasattr(first_claimed_date, "strftime") else str(first_claimed_date)
+
+    audit_text = (
+        f"🕵️‍♂️ <b>Security Dossier: {safe_html(target_fname)}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🆔 <b>Telegram ID:</b> <code>{target_id}</code>\n"
+        f"📛 <b>Username:</b> @{safe_html(target_username or 'None')}\n"
+        f"🛡️ <b>Auth Status:</b> {is_auth}\n"
+        f"🚫 <b>Banned / Blacklisted:</b> {banned}\n"
+        f"⚠️ <b>Strikes:</b> <b>{strikes}/3</b>\n\n"
+        f"📧 <b>Registered Email:</b> <code>{safe_html(email)}</code>\n"
+    )
+    if pending_email:
+        audit_text += f"⏳ <b>Pending Email Request:</b> <code>{safe_html(pending_email)}</code>\n"
+        
+    audit_text += (
+        f"📊 <b>Current Quota:</b> {max_quota - quota_used} remaining (Used {quota_used}/{max_quota})\n"
+        f"📁 <b>Total Comps Claimed:</b> <b>{total_comps}</b>\n"
+        f"⏱️ <b>First Claim:</b> {first_claimed}\n"
+        f"⏱️ <b>Latest Claim:</b> {last_claimed}\n\n"
+        f"📂 <b>Claimed Compilations (Recent {min(15, total_comps)} of {total_comps}):</b>\n"
+    )
+    
+    if history:
+        for idx, item in enumerate(history[:15], 1):
+            date_str = item["granted_at"].strftime("%m/%d %H:%M") if hasattr(item["granted_at"], "strftime") else "Unknown"
+            audit_text += f"{idx}. <code>{item['file_id'][:14]}...</code> | 📅 {date_str}\n"
+        if len(history) > 15:
+            audit_text += f"<i>...and {len(history) - 15} more older claims.</i>\n"
+    else:
+        audit_text += "<i>No compilation claims recorded.</i>\n"
+        
+    bot.reply_to(message, audit_text)
+
+@bot.message_handler(commands=["pending", "queue"])
+def handle_pending(message):
+    if not is_admin(message):
+        return
+        
+    if not pending_edits_queue:
+        bot.reply_to(message, "ℹ️ <b>Edit Queue Empty:</b> No video edit submissions are currently waiting for review.")
+        return
+        
+    text = f"🎬 <b>Pending Edit Submissions ({len(pending_edits_queue)}):</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+    
+    for idx, (b_id, data) in enumerate(pending_edits_queue.items(), 1):
+        elapsed_sec = int(time.time() - data.get("submitted_at", time.time()))
+        elapsed_min = elapsed_sec // 60
+        time_str = f"{elapsed_min}m ago" if elapsed_min > 0 else f"{elapsed_sec}s ago"
+        
+        fname = data.get("first_name", "User")
+        uname = data.get("username")
+        uname_str = f"@{uname}" if uname else "No username"
+        
+        text += (
+            f"<b>{idx}. {safe_html(fname)}</b> ({safe_html(uname_str)})\n"
+            f"   └ 🆔 <code>{b_id}</code>\n"
+            f"   └ ⏳ Submitted: <b>{time_str}</b>\n\n"
+        )
+        
+    text += "<i>Use the Approve/Reject buttons in your private chat to resolve them.</i>"
+    bot.reply_to(message, text)
+
+@bot.message_handler(commands=["export", "backup"])
+def handle_export(message):
+    if not is_admin(message):
+        return
+        
+    status_msg = bot.reply_to(message, "⏳ <i>Generating CSV export of all authorized buyers...</i>")
+    
+    try:
+        users = db.get_all_users_export()
+        if not users:
+            bot.edit_message_text("ℹ️ No authorized buyers found in database.", chat_id=message.chat.id, message_id=status_msg.message_id)
+            return
+            
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header row
+        writer.writerow([
+            "Telegram ID",
+            "Username",
+            "First Name",
+            "Email",
+            "Pending Email",
+            "Quota Used",
+            "Max Quota",
+            "Strikes",
+            "Total Comps Claimed"
+        ])
+        
+        # Data rows
+        for u in users:
+            writer.writerow([
+                u["telegram_id"],
+                u["username"] or "",
+                u["first_name"] or "",
+                u["email"] or "",
+                u["pending_email"] or "",
+                u["quota_used"],
+                u["max_quota"],
+                u["strikes"],
+                u["total_comps_claimed"]
+            ])
+            
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        file_obj = io.BytesIO(csv_bytes)
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
+        file_obj.name = f"buyers_export_{date_str}.csv"
+        
+        bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
+        bot.send_document(
+            chat_id=message.chat.id,
+            document=file_obj,
+            caption=f"📊 <b>Buyer Database Export</b>\nTotal Authorized Buyers: <b>{len(users)}</b>\nGenerated: <code>{date_str}</code>"
+        )
+    except Exception as e:
+        bot.edit_message_text(f"❌ Failed to export data: {e}", chat_id=message.chat.id, message_id=status_msg.message_id)
 # ----------------- CHAT MEMBER JOIN HANDLER -----------------
 @bot.message_handler(content_types=["new_chat_members"])
 def handle_new_members(message):
@@ -1215,8 +1456,9 @@ def handle_callbacks(call):
         action, user_id_str = data.split(":")
         user_id = int(user_id_str)
         
-        # When handled by one owner, delete from other owners
+        # When handled by one owner, delete from other owners and pop from queue
         sent_msgs = pending_edit_messages.pop(user_id, {})
+        pending_edits_queue.pop(user_id, None)
         for owner_id, msg_id in sent_msgs.items():
             if owner_id != call.from_user.id:
                 try:
