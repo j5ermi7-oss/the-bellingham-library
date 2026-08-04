@@ -199,6 +199,7 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("revoke", "Revoke user access"),
             telebot.types.BotCommand("revoke_email", "Revoke access by email"),
             telebot.types.BotCommand("public", "Mark a link as public teaser"),
+            telebot.types.BotCommand("changepublic", "Make GDrive link public & mark it"),
             telebot.types.BotCommand("broadcast", "Send a broadcast"),
             telebot.types.BotCommand("user", "Lookup a user"),
             telebot.types.BotCommand("whohas", "List users with access to a link"),
@@ -844,6 +845,65 @@ def handle_public(message):
         message,
         f"📢 Link marked as <b>Public</b> ({safe_html(item_type)}). Users requesting this link will be redirected to teasers without consuming quota."
     )
+
+@bot.message_handler(commands=["changepublic", "makepublic"])
+def handle_changepublic(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    link = None
+    
+    # 1. Check if replying to a message with a link
+    if message.reply_to_message and message.reply_to_message.text:
+        extracted = gdrive.extract_drive_id(message.reply_to_message.text)
+        if extracted[0]:
+            link = message.reply_to_message.text
+            
+    # 2. Check if link provided directly in command arguments
+    if not link and len(args) >= 2:
+        link = args[1]
+        
+    if not link:
+        bot.reply_to(
+            message,
+            "❌ <b>Usage:</b>\n"
+            "• <code>/changepublic &lt;google_drive_link&gt;</code>\n"
+            "• Or reply directly to any message containing a Google Drive link with <code>/changepublic</code>"
+        )
+        return
+        
+    file_id, item_type = gdrive.extract_drive_id(link)
+    if not file_id:
+        bot.reply_to(message, "❌ Invalid Google Drive URL.")
+        return
+        
+    loading_msg = bot.reply_to(message, f"⏳ <i>Changing permissions to Public on Google Drive and updating database...</i>")
+    
+    try:
+        # 1. Set Google Drive permission so anyone with the link can view
+        gdrive.make_file_public(file_id)
+        
+        # 2. Mark as public teaser in database
+        db.add_public_link(file_id, link)
+        
+        file_name = gdrive.get_file_name(file_id)
+        
+        bot.edit_message_text(
+            f"✅ <b>Successfully Changed to Public!</b>\n\n"
+            f"📁 <b>Name:</b> <code>{safe_html(file_name)}</code>\n"
+            f"🔗 <b>Type:</b> {safe_html(item_type.capitalize())}\n"
+            f"🌐 <b>Google Drive:</b> Set to 'Anyone with the link can view'\n"
+            f"📢 <b>Database:</b> Marked as Public (buyers won't be charged quota for this link)",
+            chat_id=message.chat.id,
+            message_id=loading_msg.message_id
+        )
+    except Exception as e:
+        bot.edit_message_text(
+            f"❌ <b>Failed to make link public:</b>\n<code>{safe_html(str(e))}</code>",
+            chat_id=message.chat.id,
+            message_id=loading_msg.message_id
+        )
 @bot.message_handler(commands=["broadcast", "brodcast"])
 def handle_broadcast(message):
     if not is_admin(message):

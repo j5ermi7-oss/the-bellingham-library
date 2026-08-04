@@ -131,6 +131,31 @@ def share_file_or_folder(file_id, email, role="reader"):
         print(f"Unexpected error during share: {error}")
         raise error
 
+def make_file_public(file_id):
+    """
+    Makes a Google Drive file or folder publicly accessible to anyone with the link (viewer role).
+    Returns: permission_id (str)
+    """
+    service = get_drive_service()
+    public_permission = {
+        "type": "anyone",
+        "role": "reader"
+    }
+    try:
+        permission = service.permissions().create(
+            fileId=file_id,
+            body=public_permission,
+            fields="id",
+            supportsAllDrives=True
+        ).execute()
+        return permission.get("id")
+    except HttpError as error:
+        print(f"Google Drive API HttpError during make_file_public: {error}")
+        raise error
+    except Exception as error:
+        print(f"Unexpected error during make_file_public: {error}")
+        raise error
+
 def revoke_file_or_folder(file_id, permission_id, email=None):
     """
     Revokes access to a Google Drive file or folder using the permission_id.
