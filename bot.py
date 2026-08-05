@@ -220,6 +220,7 @@ COMMAND_MAP = {
     "unregistered": "Scan & reveal unregistered emails with access to comps",
     "unauth": "Unauthorize a user and revoke Drive access",
     "unauth_email": "Unauthorize buyer and revoke Drive access by email",
+    "access": "Manually grant Google Drive access to an email for a link",
     "help": "Open Help & FAQ menu",
     "faq": "Open Help & FAQ menu"
 }
@@ -283,6 +284,7 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("public", "Mark a link as public teaser"),
             telebot.types.BotCommand("changepublic", "Make GDrive link public & mark it"),
             telebot.types.BotCommand("unregistered", "Reveal unregistered emails on comps"),
+            telebot.types.BotCommand("access", "Grant access to email for a link"),
             telebot.types.BotCommand("nukelink", "Emergency revoke all access to a link"),
             telebot.types.BotCommand("export", "Download CSV backup of all buyers"),
             telebot.types.BotCommand("broadcast", "Send a broadcast"),
@@ -966,6 +968,106 @@ def handle_unauth_email(message):
         chat_id=status_msg.chat.id,
         message_id=status_msg.message_id
     )
+
+@bot.message_handler(commands=["access", "grant_access", "giveaccess"])
+def handle_access(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    email = None
+    link = None
+    
+    # 1. Check if replying to a message
+    if message.reply_to_message and message.reply_to_message.text:
+        reply_text = message.reply_to_message.text
+        extracted = gdrive.extract_drive_id(reply_text)
+        if extracted[0]:
+            link = reply_text
+        elif "@" in reply_text and "." in reply_text:
+            for word in reply_text.split():
+                if "@" in word and "." in word:
+                    email = word.strip().lower()
+                    break
+
+    # 2. Parse arguments (order-independent)
+    for arg in args[1:]:
+        extracted = gdrive.extract_drive_id(arg)
+        if extracted[0] and not link:
+            link = arg
+        elif "@" in arg and "." in arg and not arg.startswith("@") and not email:
+            email = arg.strip().lower()
+
+    if not email or not link:
+        bot.reply_to(
+            message,
+            "❌ <b>Usage:</b>\n"
+            "• <code>/access &lt;email&gt; &lt;gdrive_link&gt;</code>\n"
+            "• Or reply directly to a link with <code>/access &lt;email&gt;</code>\n\n"
+            "<b>Example:</b>\n"
+            "<code>/access buyer@gmail.com https://drive.google.com/drive/folders/1ABC...</code>"
+        )
+        return
+
+    file_id, item_type = gdrive.extract_drive_id(link)
+    if not file_id:
+        bot.reply_to(message, "❌ Invalid Google Drive link.")
+        return
+
+    status_msg = bot.reply_to(
+        message, 
+        f"⏳ <b>Granting Google Drive Access...</b>\n"
+        f"📧 Email: <code>{safe_html(email)}</code>"
+    )
+
+    try:
+        permission_id = gdrive.share_file_or_folder(file_id, email, role="reader")
+        file_name = gdrive.get_file_name(file_id)
+
+        # Look up user if registered
+        user_info = db.get_user_by_email(email)
+        target_id = user_info["telegram_id"] if user_info else None
+        target_uname = user_info.get("username") if user_info else None
+
+        # Log into database access history
+        db.log_access(target_id, email, file_id, link, permission_id)
+
+        if user_info:
+            buyer_str = f"@{safe_html(target_uname or 'User')} (ID: <code>{target_id}</code>)"
+            # Notify buyer in Telegram
+            try:
+                bot.send_message(
+                    target_id,
+                    f"🎉 <b>Compilation Access Granted!</b>\n\n"
+                    f"📁 <b>Item:</b> {safe_html(file_name)}\n"
+                    f"🔗 <b>Link:</b> <a href='{link}'>Open in Google Drive</a>\n\n"
+                    f"The administrator has directly granted your email access to this compilation."
+                )
+            except Exception:
+                pass
+        else:
+            buyer_str = "<i>Direct Email (Not yet registered on Telegram)</i>"
+
+        bot.edit_message_text(
+            f"✅ <b>Access Granted Successfully!</b>\n\n"
+            f"📁 <b>Item:</b> <code>{safe_html(file_name)}</code>\n"
+            f"🔗 <b>File ID:</b> <code>{file_id}</code>\n"
+            f"📧 <b>Email:</b> <code>{safe_html(email)}</code>\n"
+            f"👤 <b>Buyer:</b> {buyer_str}\n"
+            f"🔑 <b>Permission ID:</b> <code>{safe_html(permission_id)}</code>\n\n"
+            f"Logged in database access history.",
+            chat_id=status_msg.chat.id,
+            message_id=status_msg.message_id
+        )
+    except Exception as e:
+        bot.edit_message_text(
+            f"❌ <b>Failed to Grant Access</b>\n\n"
+            f"📧 Email: <code>{safe_html(email)}</code>\n"
+            f"📁 File ID: <code>{file_id}</code>\n"
+            f"⚠️ <b>Error:</b> <code>{safe_html(str(e))}</code>",
+            chat_id=status_msg.chat.id,
+            message_id=status_msg.message_id
+        )
 
 @bot.message_handler(commands=["whohas"])
 def handle_whohas(message):
