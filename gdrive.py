@@ -11,8 +11,14 @@ SERVICE_ACCOUNT_FILE = os.path.join(os.path.dirname(__file__), "service_account.
 # Define the scopes needed for managing file/folder permissions
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
+_cached_drive_service = None
+
 def get_drive_service():
-    """Initializes and returns the Google Drive API service."""
+    """Initializes and returns the cached Google Drive API service."""
+    global _cached_drive_service
+    if _cached_drive_service is not None:
+        return _cached_drive_service
+
     # 1. Try loading from environment variable (ideal for Render/Railway/Heroku)
     env_creds = os.getenv("SERVICE_ACCOUNT_JSON")
     if env_creds:
@@ -24,7 +30,8 @@ def get_drive_service():
             creds = service_account.Credentials.from_service_account_info(
                 info, scopes=SCOPES
             )
-            return build("drive", "v3", credentials=creds)
+            _cached_drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+            return _cached_drive_service
         except Exception as e:
             print(f"Error loading credentials from SERVICE_ACCOUNT_JSON environment variable: {e}")
             
@@ -45,7 +52,8 @@ def get_drive_service():
         creds = service_account.Credentials.from_service_account_info(
             info, scopes=SCOPES
         )
-        return build("drive", "v3", credentials=creds)
+        _cached_drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        return _cached_drive_service
     except Exception as e:
         print(f"Error loading local service_account.json file: {e}")
         raise e
@@ -234,4 +242,29 @@ def get_file_permissions(file_id):
     except Exception as e:
         print(f"Error fetching permissions for {file_id}: {e}")
         return []
+
+def get_file_details(file_id):
+    """
+    Fetches the file name and all permissions in ONE single fast API call.
+    Returns: (file_name: str, permissions: list)
+    """
+    try:
+        service = get_drive_service()
+        file_obj = service.files().get(
+            fileId=file_id,
+            fields="name, permissions(id, emailAddress, role, type, displayName)",
+            supportsAllDrives=True
+        ).execute()
+        name = file_obj.get("name", "Unknown File")
+        perms = file_obj.get("permissions", [])
+        return name, perms
+    except Exception:
+        # Fallback to permissions.list if files().get permissions field is restricted
+        try:
+            name = get_file_name(file_id)
+            perms = get_file_permissions(file_id)
+            return name, perms
+        except Exception:
+            return "Unknown File", []
+
 

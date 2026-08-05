@@ -1360,26 +1360,23 @@ def handle_unregistered(message):
     )
     
     try:
-        def fetch_file_perms(fid):
+        def fetch_file_info(fid):
             try:
-                perms = gdrive.get_file_permissions(fid)
-                return fid, perms, None
+                name, perms = gdrive.get_file_details(fid)
+                return fid, name, perms, None
             except Exception as ex:
-                return fid, [], str(ex)
+                return fid, "Unknown File", [], str(ex)
 
-        file_perms_map = {}
+        file_info_list = []
         with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_file = {executor.submit(fetch_file_perms, fid): fid for fid in file_ids}
-            for future in as_completed(future_to_file):
-                fid, perms, err = future.result()
-                file_perms_map[fid] = perms
+            futures = [executor.submit(fetch_file_info, fid) for fid in file_ids]
+            for future in as_completed(futures):
+                file_info_list.append(future.result())
 
         unregistered_map = {}
         total_files_scanned = len(file_ids)
-        file_name_cache = {}
 
-        for f_id, permissions in file_perms_map.items():
-            f_name = None
+        for f_id, f_name, permissions, err in file_info_list:
             for p in permissions:
                 p_type = p.get("type", "")
                 p_role = p.get("role", "")
@@ -1391,10 +1388,6 @@ def handle_unregistered(message):
                     continue
                     
                 if email not in registered_emails:
-                    if f_name is None:
-                        if f_id not in file_name_cache:
-                            file_name_cache[f_id] = gdrive.get_file_name(f_id)
-                        f_name = file_name_cache[f_id]
                     if email not in unregistered_map:
                         unregistered_map[email] = []
                     unregistered_map[email].append({
@@ -1456,10 +1449,15 @@ def handle_unregistered(message):
         date_str = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
         file_obj.name = f"unregistered_emails_{date_str}.csv"
         
+        thread_kwargs = {}
+        if hasattr(message, "message_thread_id") and message.message_thread_id:
+            thread_kwargs["message_thread_id"] = message.message_thread_id
+            
         bot.send_document(
             chat_id=message.chat.id,
             document=file_obj,
-            caption=f"📊 <b>Detailed Audit Export:</b> {total_unreg_emails} unregistered email(s)"
+            caption=f"📊 <b>Detailed Audit Export:</b> {total_unreg_emails} unregistered email(s)",
+            **thread_kwargs
         )
     except Exception as e:
         bot.edit_message_text(
