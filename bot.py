@@ -8,6 +8,7 @@ import io
 import csv
 import datetime
 import difflib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReactionTypeEmoji
 from dotenv import load_dotenv
@@ -1285,62 +1286,65 @@ def handle_unregistered(message):
             
         status_msg = bot.reply_to(message, "⏳ <i>Auditing Google Drive permissions for this item...</i>")
         
-        file_name = gdrive.get_file_name(file_id)
-        permissions = gdrive.get_file_permissions(file_id)
-        
-        unregistered = []
-        for p in permissions:
-            p_type = p.get("type", "")
-            p_role = p.get("role", "")
-            email = p.get("emailAddress", "").strip().lower()
+        try:
+            file_name = gdrive.get_file_name(file_id)
+            permissions = gdrive.get_file_permissions(file_id)
             
-            if p_type == "anyone" or p_role in ["owner", "organizer"]:
-                continue
-            if not email or email == sa_email:
-                continue
+            unregistered = []
+            for p in permissions:
+                p_type = p.get("type", "")
+                p_role = p.get("role", "")
+                email = p.get("emailAddress", "").strip().lower()
                 
-            if email not in registered_emails:
-                unregistered.append({
-                    "email": email,
-                    "role": p_role,
-                    "perm_id": p.get("id")
-                })
+                if p_type == "anyone" or p_role in ["owner", "organizer"]:
+                    continue
+                if not email or email == sa_email:
+                    continue
+                    
+                if email not in registered_emails:
+                    unregistered.append({
+                        "email": email,
+                        "role": p_role,
+                        "perm_id": p.get("id")
+                    })
+                    
+            if not unregistered:
+                bot.edit_message_text(
+                    f"✅ <b>Audit Clean!</b>\n\n"
+                    f"📁 <b>Item:</b> <code>{safe_html(file_name)}</code>\n"
+                    f"🔗 <b>File ID:</b> <code>{file_id}</code>\n\n"
+                    f"No unregistered or unauthorized emails have access to this compilation.",
+                    chat_id=message.chat.id,
+                    message_id=status_msg.message_id
+                )
+                return
                 
-        if not unregistered:
-            bot.edit_message_text(
-                f"✅ <b>Audit Clean!</b>\n\n"
+            text = (
+                f"🚨 <b>Unregistered Emails Detected ({len(unregistered)})</b>\n\n"
                 f"📁 <b>Item:</b> <code>{safe_html(file_name)}</code>\n"
                 f"🔗 <b>File ID:</b> <code>{file_id}</code>\n\n"
-                f"No unregistered or unauthorized emails have access to this compilation.",
-                chat_id=message.chat.id,
-                message_id=status_msg.message_id
+                f"The following emails have active Google Drive access but are <b>NOT registered buyers</b> in the bot database:\n\n"
             )
-            return
             
-        text = (
-            f"🚨 <b>Unregistered Emails Detected ({len(unregistered)})</b>\n\n"
-            f"📁 <b>Item:</b> <code>{safe_html(file_name)}</code>\n"
-            f"🔗 <b>File ID:</b> <code>{file_id}</code>\n\n"
-            f"The following emails have active Google Drive access but are <b>NOT registered buyers</b> in the bot database:\n\n"
-        )
-        
-        for idx, u in enumerate(unregistered[:20], 1):
-            text += f"{idx}. 📧 <code>{safe_html(u['email'])}</code> (Role: <i>{safe_html(u['role'])}</i>)\n"
+            for idx, u in enumerate(unregistered[:20], 1):
+                text += f"{idx}. 📧 <code>{safe_html(u['email'])}</code> (Role: <i>{safe_html(u['role'])}</i>)\n"
+                
+            if len(unregistered) > 20:
+                text += f"\n<i>...and {len(unregistered) - 20} more unregistered emails.</i>\n"
+                
+            markup = InlineKeyboardMarkup()
+            markup.add(
+                InlineKeyboardButton(f"☢️ Revoke All {len(unregistered)} Unregistered", callback_data=f"revoke_unreg:{file_id}")
+            )
             
-        if len(unregistered) > 20:
-            text += f"\n<i>...and {len(unregistered) - 20} more unregistered emails.</i>\n"
-            
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton(f"☢️ Revoke All {len(unregistered)} Unregistered", callback_data=f"revoke_unreg:{file_id}")
-        )
-        
-        bot.edit_message_text(
-            text,
-            chat_id=message.chat.id,
-            message_id=status_msg.message_id,
-            reply_markup=markup
-        )
+            bot.edit_message_text(
+                text,
+                chat_id=message.chat.id,
+                message_id=status_msg.message_id,
+                reply_markup=markup
+            )
+        except Exception as e:
+            bot.edit_message_text(f"❌ Error during compilation audit: {e}", chat_id=message.chat.id, message_id=status_msg.message_id)
         return
 
     # CASE 2: FULL LIBRARY AUDIT ACROSS ALL TRACKED COMPS
@@ -1352,90 +1356,117 @@ def handle_unregistered(message):
     status_msg = bot.reply_to(
         message, 
         f"⏳ <b>Scanning Google Drive Library...</b>\n"
-        f"Auditing permissions across <b>{len(file_ids)}</b> tracked compilations against registered buyers."
+        f"Auditing permissions across <b>{len(file_ids)}</b> tracked compilations in parallel..."
     )
     
-    unregistered_map = {}
-    total_files_scanned = 0
-    
-    for f_id in file_ids:
-        total_files_scanned += 1
-        permissions = gdrive.get_file_permissions(f_id)
-        f_name = None
-        
-        for p in permissions:
-            p_type = p.get("type", "")
-            p_role = p.get("role", "")
-            email = p.get("emailAddress", "").strip().lower()
+    try:
+        def fetch_file_perms(fid):
+            try:
+                perms = gdrive.get_file_permissions(fid)
+                return fid, perms, None
+            except Exception as ex:
+                return fid, [], str(ex)
+
+        file_perms_map = {}
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_file = {executor.submit(fetch_file_perms, fid): fid for fid in file_ids}
+            for future in as_completed(future_to_file):
+                fid, perms, err = future.result()
+                file_perms_map[fid] = perms
+
+        unregistered_map = {}
+        total_files_scanned = len(file_ids)
+        file_name_cache = {}
+
+        for f_id, permissions in file_perms_map.items():
+            f_name = None
+            for p in permissions:
+                p_type = p.get("type", "")
+                p_role = p.get("role", "")
+                email = p.get("emailAddress", "").strip().lower()
+                
+                if p_type == "anyone" or p_role in ["owner", "organizer"]:
+                    continue
+                if not email or email == sa_email:
+                    continue
+                    
+                if email not in registered_emails:
+                    if f_name is None:
+                        if f_id not in file_name_cache:
+                            file_name_cache[f_id] = gdrive.get_file_name(f_id)
+                        f_name = file_name_cache[f_id]
+                    if email not in unregistered_map:
+                        unregistered_map[email] = []
+                    unregistered_map[email].append({
+                        "file_id": f_id,
+                        "file_name": f_name,
+                        "perm_id": p.get("id"),
+                        "role": p_role
+                    })
+                    
+        if not unregistered_map:
+            bot.edit_message_text(
+                f"✅ <b>Full Library Audit 100% Clean!</b>\n\n"
+                f"📊 <b>Compilations Scanned:</b> {total_files_scanned}\n"
+                f"👥 <b>Registered Authorized Buyers:</b> {len(registered_emails)}\n\n"
+                f"No unregistered or unauthorized emails have access to any library compilations.",
+                chat_id=message.chat.id,
+                message_id=status_msg.message_id
+            )
+            return
             
-            if p_type == "anyone" or p_role in ["owner", "organizer"]:
-                continue
-            if not email or email == sa_email:
-                continue
-                
-            if email not in registered_emails:
-                if f_name is None:
-                    f_name = gdrive.get_file_name(f_id)
-                if email not in unregistered_map:
-                    unregistered_map[email] = []
-                unregistered_map[email].append({
-                    "file_id": f_id,
-                    "file_name": f_name,
-                    "perm_id": p.get("id"),
-                    "role": p_role
-                })
-                
-    if not unregistered_map:
+        total_unreg_emails = len(unregistered_map)
+        total_access_instances = sum(len(v) for v in unregistered_map.values())
+        
+        text = (
+            f"🚨 <b>Library Audit: Unregistered Access Detected!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📁 <b>Compilations Scanned:</b> {total_files_scanned}\n"
+            f"⚠️ <b>Unregistered Emails Found:</b> <b>{total_unreg_emails}</b>\n"
+            f"🔗 <b>Total Unauthorized Access Grants:</b> <b>{total_access_instances}</b>\n\n"
+            f"<b>Unregistered Emails & Compromised Comps:</b>\n"
+        )
+        
+        for idx, (email, comp_list) in enumerate(list(unregistered_map.items())[:10], 1):
+            sample_names = ", ".join([c["file_name"] for c in comp_list[:2]])
+            if len(comp_list) > 2:
+                sample_names += f" (+{len(comp_list) - 2} more)"
+            text += f"<b>{idx}. 📧 <code>{safe_html(email)}</code></b>\n   └ Access to <b>{len(comp_list)}</b> comp(s): <i>{safe_html(sample_names)}</i>\n\n"
+            
+        if total_unreg_emails > 10:
+            text += f"<i>...and {total_unreg_emails - 10} more unregistered emails. Full details in attached CSV below.</i>\n"
+            
+        # Edit the existing message with the text summary
         bot.edit_message_text(
-            f"✅ <b>Full Library Audit 100% Clean!</b>\n\n"
-            f"📊 <b>Compilations Scanned:</b> {total_files_scanned}\n"
-            f"👥 <b>Registered Authorized Buyers:</b> {len(registered_emails)}\n\n"
-            f"No unregistered or unauthorized emails have access to any library compilations.",
+            text,
             chat_id=message.chat.id,
             message_id=status_msg.message_id
         )
-        return
         
-    total_unreg_emails = len(unregistered_map)
-    total_access_instances = sum(len(v) for v in unregistered_map.values())
-    
-    text = (
-        f"🚨 <b>Library Audit: Unregistered Access Detected!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📁 <b>Compilations Scanned:</b> {total_files_scanned}\n"
-        f"⚠️ <b>Unregistered Emails Found:</b> <b>{total_unreg_emails}</b>\n"
-        f"🔗 <b>Total Unauthorized Access Grants:</b> <b>{total_access_instances}</b>\n\n"
-        f"<b>Unregistered Emails & Compromised Comps:</b>\n"
-    )
-    
-    for idx, (email, comp_list) in enumerate(list(unregistered_map.items())[:15], 1):
-        sample_names = ", ".join([c["file_name"] for c in comp_list[:2]])
-        if len(comp_list) > 2:
-            sample_names += f" (+{len(comp_list) - 2} more)"
-        text += f"<b>{idx}. 📧 <code>{safe_html(email)}</code></b>\n   └ Access to <b>{len(comp_list)}</b> comp(s): <i>{safe_html(sample_names)}</i>\n\n"
+        # Generate CSV report and send as separate attachment
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Unregistered Email", "Compilation Name", "File ID", "Permission ID", "Role"])
+        for email, comp_list in unregistered_map.items():
+            for item in comp_list:
+                writer.writerow([email, item["file_name"], item["file_id"], item["perm_id"] or "", item["role"]])
+                
+        csv_bytes = output.getvalue().encode("utf-8-sig")
+        file_obj = io.BytesIO(csv_bytes)
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
+        file_obj.name = f"unregistered_emails_{date_str}.csv"
         
-    if total_unreg_emails > 15:
-        text += f"<i>...and {total_unreg_emails - 15} more unregistered emails. Full details in attached CSV.</i>\n"
-        
-    # Generate CSV report of all unregistered email access
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Unregistered Email", "Compilation Name", "File ID", "Permission ID", "Role"])
-    for email, comp_list in unregistered_map.items():
-        for item in comp_list:
-            writer.writerow([email, item["file_name"], item["file_id"], item["perm_id"] or "", item["role"]])
-            
-    csv_bytes = output.getvalue().encode("utf-8-sig")
-    file_obj = io.BytesIO(csv_bytes)
-    date_str = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
-    file_obj.name = f"unregistered_emails_{date_str}.csv"
-    
-    bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
-    bot.send_document(
-        chat_id=message.chat.id,
-        document=file_obj,
-        caption=text
-    )
+        bot.send_document(
+            chat_id=message.chat.id,
+            document=file_obj,
+            caption=f"📊 <b>Detailed Audit Export:</b> {total_unreg_emails} unregistered email(s)"
+        )
+    except Exception as e:
+        bot.edit_message_text(
+            f"❌ <b>Failed to complete library audit:</b>\n<code>{safe_html(str(e))}</code>",
+            chat_id=message.chat.id,
+            message_id=status_msg.message_id
+        )
 
 @bot.message_handler(commands=["audit"])
 def handle_audit(message):
