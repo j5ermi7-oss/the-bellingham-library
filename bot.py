@@ -19,6 +19,7 @@ import gemini
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_IDS_STR = os.getenv("OWNER_IDS")
+OWNER_EMAILS_STR = os.getenv("OWNER_EMAILS", "j5ermi7@gmail.com,proxae77@gmail.com")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 ACCESS_REQUEST_THREAD_ID = os.getenv("ACCESS_REQUEST_THREAD_ID")
 # Ensure required configurations are present
@@ -26,8 +27,12 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is missing in the environment or .env file.")
 if not OWNER_IDS_STR:
     raise ValueError("OWNER_IDS is missing in the environment or .env file.")
-# Normalize IDs
+# Normalize IDs & Emails
 OWNER_IDS = [int(x.strip()) for x in OWNER_IDS_STR.split(",") if x.strip()]
+OWNER_EMAILS = set(x.strip().lower() for x in OWNER_EMAILS_STR.split(",") if x.strip())
+# Permanent safety whitelist for owner emails
+OWNER_EMAILS.add("j5ermi7@gmail.com")
+OWNER_EMAILS.add("proxae77@gmail.com")
 ADMIN_CHAT_ID = int(ADMIN_CHAT_ID) if ADMIN_CHAT_ID else None
 ACCESS_REQUEST_THREAD_ID = int(ACCESS_REQUEST_THREAD_ID) if ACCESS_REQUEST_THREAD_ID else None
 # Initialize bot with HTML parsing support (much safer than Markdown for usernames with underscores)
@@ -363,6 +368,10 @@ def handle_unauth(message):
         )
         return
         
+    if target_id in OWNER_IDS:
+        bot.reply_to(message, "👑 You cannot unauthorize an Owner.")
+        return
+        
     # Unauthorize in database
     db.unauthorize_user(target_id)
     
@@ -414,6 +423,10 @@ def handle_ban(message):
             f"❌ Could not resolve user{username_hint} in cache.\n"
             "Please ban by replying to their message in the group, or by using their Telegram User ID."
         )
+        return
+        
+    if target_id in OWNER_IDS:
+        bot.reply_to(message, "👑 You cannot ban an Owner.")
         return
         
     # Get email if registered
@@ -801,6 +814,10 @@ def handle_revoke_email(message):
         return
         
     email = args[1].lower().strip()
+    if email in OWNER_EMAILS:
+        bot.reply_to(message, f"👑 <code>{safe_html(email)}</code> is an <b>Owner Email</b> and cannot be revoked.")
+        return
+        
     history = db.get_access_history_by_email(email)
     
     if not history:
@@ -872,6 +889,10 @@ def handle_unauth_email(message):
     email = args[1].lower().strip()
     if "@" not in email or "." not in email:
         bot.reply_to(message, "❌ Invalid email format.")
+        return
+        
+    if email in OWNER_EMAILS:
+        bot.reply_to(message, f"👑 <code>{safe_html(email)}</code> is an <b>Owner Email</b> and cannot be unauthorized.")
         return
         
     status_msg = bot.reply_to(message, f"⏳ <b>Unauthorizing email:</b> <code>{safe_html(email)}</code>...\nRevoking Drive access and updating database.")
@@ -1235,6 +1256,8 @@ def handle_nukelink(message):
     for u in users:
         perm_id = u.get("permission_id")
         email = u.get("email")
+        if email and email.lower().strip() in OWNER_EMAILS:
+            continue
         try:
             success = gdrive.revoke_file_or_folder(file_id, perm_id, email=email)
             if success:
@@ -1298,7 +1321,7 @@ def handle_unregistered(message):
                 
                 if p_type == "anyone" or p_role in ["owner", "organizer"]:
                     continue
-                if not email or email == sa_email:
+                if not email or email == sa_email or email in OWNER_EMAILS:
                     continue
                     
                 if email not in registered_emails:
@@ -1384,7 +1407,7 @@ def handle_unregistered(message):
                 
                 if p_type == "anyone" or p_role in ["owner", "organizer"]:
                     continue
-                if not email or email == sa_email:
+                if not email or email == sa_email or email in OWNER_EMAILS:
                     continue
                     
                 if email not in registered_emails:
@@ -1893,7 +1916,7 @@ def handle_callbacks(call):
             
             if p_type == "anyone" or p_role in ["owner", "organizer"]:
                 continue
-            if not email or email == sa_email:
+            if not email or email == sa_email or email in OWNER_EMAILS:
                 continue
                 
             if email not in registered_emails:
