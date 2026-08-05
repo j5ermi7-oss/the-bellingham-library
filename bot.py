@@ -211,6 +211,9 @@ COMMAND_MAP = {
     "ban": "Ban and blacklist user permanently",
     "stats": "View bot statistics and leaderboard",
     "refresh_menu": "Force update Telegram command menu",
+    "unregistered": "Scan & reveal unregistered emails with access to comps",
+    "unauth": "Unauthorize a user and revoke Drive access",
+    "unauth_email": "Unauthorize buyer and revoke Drive access by email",
     "help": "Open Help & FAQ menu",
     "faq": "Open Help & FAQ menu"
 }
@@ -262,6 +265,8 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("trending", "Top 15 requested compilations"),
             telebot.types.BotCommand("pending", "View pending edit video queue"),
             telebot.types.BotCommand("auth", "Authorize a user"),
+            telebot.types.BotCommand("unauth", "Unauthorize a user"),
+            telebot.types.BotCommand("unauth_email", "Unauthorize & revoke access by email"),
             telebot.types.BotCommand("audit", "Full forensic dossier on a user"),
             telebot.types.BotCommand("whohas_rank", "Lookup users by trending rank"),
             telebot.types.BotCommand("react", "React to a message with emoji"),
@@ -271,6 +276,7 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("revoke_email", "Revoke access by email"),
             telebot.types.BotCommand("public", "Mark a link as public teaser"),
             telebot.types.BotCommand("changepublic", "Make GDrive link public & mark it"),
+            telebot.types.BotCommand("unregistered", "Reveal unregistered emails on comps"),
             telebot.types.BotCommand("nukelink", "Emergency revoke all access to a link"),
             telebot.types.BotCommand("export", "Download CSV backup of all buyers"),
             telebot.types.BotCommand("broadcast", "Send a broadcast"),
@@ -341,13 +347,18 @@ def handle_unauth(message):
     if not is_admin(message):
         return
         
+    args = message.text.split()
+    if len(args) >= 2 and "@" in args[1] and "." in args[1] and not args[1].startswith("@"):
+        handle_unauth_email(message)
+        return
+        
     target_id, target_username, target_fname = resolve_target_user(message)
     if not target_id:
         username_hint = f" (@{target_username})" if target_username else ""
         bot.reply_to(
             message,
             f"❌ Could not resolve user{username_hint} in cache.\n"
-            "Please unauthorize by replying to their message in the group, or by using their Telegram User ID."
+            "Please unauthorize by replying to their message in the group, by Telegram User ID, or use <code>/unauth_email &lt;email&gt;</code>."
         )
         return
         
@@ -842,6 +853,98 @@ def handle_revoke_email(message):
         parse_mode="HTML"
     )
 
+@bot.message_handler(commands=["unauth_email", "unauthorize_email"])
+def handle_unauth_email(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(
+            message,
+            "❌ <b>Usage:</b>\n"
+            "• <code>/unauth_email &lt;email&gt;</code>\n"
+            "Example: <code>/unauth_email buyer@gmail.com</code>"
+        )
+        return
+        
+    email = args[1].lower().strip()
+    if "@" not in email or "." not in email:
+        bot.reply_to(message, "❌ Invalid email format.")
+        return
+        
+    status_msg = bot.reply_to(message, f"⏳ <b>Unauthorizing email:</b> <code>{safe_html(email)}</code>...\nRevoking Drive access and updating database.")
+    
+    # 1. Look up user account in database
+    user_info = db.get_user_by_email(email)
+    target_id = None
+    target_uname = None
+    
+    if user_info:
+        target_id = user_info["telegram_id"]
+        target_uname = user_info.get("username")
+        db.unauthorize_user(target_id)
+    else:
+        db.unauthorize_user_by_email(email)
+        
+    # 2. Revoke all Google Drive files from access history
+    history = db.get_access_history_by_email(email)
+    revoked_count = 0
+    failed_count = 0
+    
+    revoked_file_ids = set()
+    for item in history:
+        f_id = item["file_id"]
+        p_id = item.get("permission_id")
+        revoked_file_ids.add(f_id)
+        try:
+            success = gdrive.revoke_file_or_folder(f_id, p_id, email=email)
+            if success:
+                revoked_count += 1
+            else:
+                failed_count += 1
+        except Exception as e:
+            print(f"Failed to revoke {f_id} for {email}: {e}")
+            failed_count += 1
+            
+    # Also check any tracked files on Drive to ensure no lingering access
+    all_tracked = db.get_all_tracked_file_ids()
+    for f_id in all_tracked:
+        if f_id not in revoked_file_ids:
+            try:
+                if gdrive.revoke_file_or_folder(f_id, None, email=email):
+                    revoked_count += 1
+            except Exception:
+                pass
+                
+    db.clear_access_history_by_email(email)
+    if target_id:
+        db.clear_access_history(target_id)
+        
+    # 3. Notify user on Telegram if found
+    if target_id:
+        try:
+            bot.send_message(
+                target_id,
+                "⚠️ <b>Authorization Revoked</b>\n\n"
+                "Your buyer authorization and access to all Google Drive compilations have been revoked by the administrator."
+            )
+        except Exception:
+            pass
+            
+    user_status_str = f"✅ User @{safe_html(target_uname or 'User')} (ID: <code>{target_id}</code>) Unauthorized" if target_id else "ℹ️ No Telegram account registered with this email"
+    
+    bot.edit_message_text(
+        f"🚫 <b>Email Unauthorized Successfully</b>\n\n"
+        f"📧 <b>Email:</b> <code>{safe_html(email)}</code>\n"
+        f"👤 <b>Account Status:</b> {user_status_str}\n"
+        f"📁 <b>Drive Compilations Revoked:</b> {revoked_count} items\n"
+        f"⚠️ <b>Failed / Missing:</b> {failed_count} items\n\n"
+        f"All database access history and authorization for this email have been wiped.",
+        chat_id=status_msg.chat.id,
+        message_id=status_msg.message_id
+    )
+
 @bot.message_handler(commands=["whohas"])
 def handle_whohas(message):
     if not is_admin(message):
@@ -1152,6 +1255,186 @@ def handle_nukelink(message):
         f"All access history for this compilation has been wiped from the database.",
         chat_id=status_msg.chat.id,
         message_id=status_msg.message_id
+    )
+
+@bot.message_handler(commands=["unregistered", "unregistered_emails", "unreg"])
+def handle_unregistered(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    link = None
+    if message.reply_to_message and message.reply_to_message.text:
+        extracted = gdrive.extract_drive_id(message.reply_to_message.text)
+        if extracted[0]:
+            link = message.reply_to_message.text
+    if not link and len(args) >= 2 and args[1].lower() != "all":
+        extracted = gdrive.extract_drive_id(args[1])
+        if extracted[0]:
+            link = args[1]
+            
+    registered_emails = db.get_all_registered_emails()
+    sa_email = gdrive.get_service_account_email()
+    
+    # CASE 1: SPECIFIC COMPILATION LINK SCAN
+    if link:
+        file_id, item_type = gdrive.extract_drive_id(link)
+        if not file_id:
+            bot.reply_to(message, "❌ Invalid Google Drive URL.")
+            return
+            
+        status_msg = bot.reply_to(message, "⏳ <i>Auditing Google Drive permissions for this item...</i>")
+        
+        file_name = gdrive.get_file_name(file_id)
+        permissions = gdrive.get_file_permissions(file_id)
+        
+        unregistered = []
+        for p in permissions:
+            p_type = p.get("type", "")
+            p_role = p.get("role", "")
+            email = p.get("emailAddress", "").strip().lower()
+            
+            if p_type == "anyone" or p_role in ["owner", "organizer"]:
+                continue
+            if not email or email == sa_email:
+                continue
+                
+            if email not in registered_emails:
+                unregistered.append({
+                    "email": email,
+                    "role": p_role,
+                    "perm_id": p.get("id")
+                })
+                
+        if not unregistered:
+            bot.edit_message_text(
+                f"✅ <b>Audit Clean!</b>\n\n"
+                f"📁 <b>Item:</b> <code>{safe_html(file_name)}</code>\n"
+                f"🔗 <b>File ID:</b> <code>{file_id}</code>\n\n"
+                f"No unregistered or unauthorized emails have access to this compilation.",
+                chat_id=message.chat.id,
+                message_id=status_msg.message_id
+            )
+            return
+            
+        text = (
+            f"🚨 <b>Unregistered Emails Detected ({len(unregistered)})</b>\n\n"
+            f"📁 <b>Item:</b> <code>{safe_html(file_name)}</code>\n"
+            f"🔗 <b>File ID:</b> <code>{file_id}</code>\n\n"
+            f"The following emails have active Google Drive access but are <b>NOT registered buyers</b> in the bot database:\n\n"
+        )
+        
+        for idx, u in enumerate(unregistered[:20], 1):
+            text += f"{idx}. 📧 <code>{safe_html(u['email'])}</code> (Role: <i>{safe_html(u['role'])}</i>)\n"
+            
+        if len(unregistered) > 20:
+            text += f"\n<i>...and {len(unregistered) - 20} more unregistered emails.</i>\n"
+            
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton(f"☢️ Revoke All {len(unregistered)} Unregistered", callback_data=f"revoke_unreg:{file_id}")
+        )
+        
+        bot.edit_message_text(
+            text,
+            chat_id=message.chat.id,
+            message_id=status_msg.message_id,
+            reply_markup=markup
+        )
+        return
+
+    # CASE 2: FULL LIBRARY AUDIT ACROSS ALL TRACKED COMPS
+    file_ids = db.get_all_tracked_file_ids()
+    if not file_ids:
+        bot.reply_to(message, "ℹ️ No tracked compilations found in database to audit.")
+        return
+        
+    status_msg = bot.reply_to(
+        message, 
+        f"⏳ <b>Scanning Google Drive Library...</b>\n"
+        f"Auditing permissions across <b>{len(file_ids)}</b> tracked compilations against registered buyers."
+    )
+    
+    unregistered_map = {}
+    total_files_scanned = 0
+    
+    for f_id in file_ids:
+        total_files_scanned += 1
+        permissions = gdrive.get_file_permissions(f_id)
+        f_name = None
+        
+        for p in permissions:
+            p_type = p.get("type", "")
+            p_role = p.get("role", "")
+            email = p.get("emailAddress", "").strip().lower()
+            
+            if p_type == "anyone" or p_role in ["owner", "organizer"]:
+                continue
+            if not email or email == sa_email:
+                continue
+                
+            if email not in registered_emails:
+                if f_name is None:
+                    f_name = gdrive.get_file_name(f_id)
+                if email not in unregistered_map:
+                    unregistered_map[email] = []
+                unregistered_map[email].append({
+                    "file_id": f_id,
+                    "file_name": f_name,
+                    "perm_id": p.get("id"),
+                    "role": p_role
+                })
+                
+    if not unregistered_map:
+        bot.edit_message_text(
+            f"✅ <b>Full Library Audit 100% Clean!</b>\n\n"
+            f"📊 <b>Compilations Scanned:</b> {total_files_scanned}\n"
+            f"👥 <b>Registered Authorized Buyers:</b> {len(registered_emails)}\n\n"
+            f"No unregistered or unauthorized emails have access to any library compilations.",
+            chat_id=message.chat.id,
+            message_id=status_msg.message_id
+        )
+        return
+        
+    total_unreg_emails = len(unregistered_map)
+    total_access_instances = sum(len(v) for v in unregistered_map.values())
+    
+    text = (
+        f"🚨 <b>Library Audit: Unregistered Access Detected!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📁 <b>Compilations Scanned:</b> {total_files_scanned}\n"
+        f"⚠️ <b>Unregistered Emails Found:</b> <b>{total_unreg_emails}</b>\n"
+        f"🔗 <b>Total Unauthorized Access Grants:</b> <b>{total_access_instances}</b>\n\n"
+        f"<b>Unregistered Emails & Compromised Comps:</b>\n"
+    )
+    
+    for idx, (email, comp_list) in enumerate(list(unregistered_map.items())[:15], 1):
+        sample_names = ", ".join([c["file_name"] for c in comp_list[:2]])
+        if len(comp_list) > 2:
+            sample_names += f" (+{len(comp_list) - 2} more)"
+        text += f"<b>{idx}. 📧 <code>{safe_html(email)}</code></b>\n   └ Access to <b>{len(comp_list)}</b> comp(s): <i>{safe_html(sample_names)}</i>\n\n"
+        
+    if total_unreg_emails > 15:
+        text += f"<i>...and {total_unreg_emails - 15} more unregistered emails. Full details in attached CSV.</i>\n"
+        
+    # Generate CSV report of all unregistered email access
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Unregistered Email", "Compilation Name", "File ID", "Permission ID", "Role"])
+    for email, comp_list in unregistered_map.items():
+        for item in comp_list:
+            writer.writerow([email, item["file_name"], item["file_id"], item["perm_id"] or "", item["role"]])
+            
+    csv_bytes = output.getvalue().encode("utf-8-sig")
+    file_obj = io.BytesIO(csv_bytes)
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
+    file_obj.name = f"unregistered_emails_{date_str}.csv"
+    
+    bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
+    bot.send_document(
+        chat_id=message.chat.id,
+        document=file_obj,
+        caption=text
     )
 
 @bot.message_handler(commands=["audit"])
@@ -1561,6 +1844,44 @@ def handle_callbacks(call):
                 )
             except Exception:
                 pass
+    # 4. Revoke unregistered emails callback
+    elif data.startswith("revoke_unreg:"):
+        if not (call.from_user.id in OWNER_IDS or is_admin(call.message)):
+            bot.answer_callback_query(call.id, "Only administrators can perform this action.", show_alert=True)
+            return
+            
+        file_id = data.split(":")[1]
+        file_name = gdrive.get_file_name(file_id)
+        permissions = gdrive.get_file_permissions(file_id)
+        registered_emails = db.get_all_registered_emails()
+        sa_email = gdrive.get_service_account_email()
+        
+        revoked_count = 0
+        for p in permissions:
+            p_type = p.get("type", "")
+            p_role = p.get("role", "")
+            email = p.get("emailAddress", "").strip().lower()
+            
+            if p_type == "anyone" or p_role in ["owner", "organizer"]:
+                continue
+            if not email or email == sa_email:
+                continue
+                
+            if email not in registered_emails:
+                try:
+                    gdrive.revoke_file_or_folder(file_id, p.get("id"), email=email)
+                    revoked_count += 1
+                except Exception as e:
+                    print(f"Failed to revoke {email} on {file_id}: {e}")
+                    
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"☢️ <b>Unregistered Access Revoked!</b>\n\n"
+                 f"📁 <b>Item:</b> <code>{safe_html(file_name)}</code>\n"
+                 f"✅ Successfully revoked <b>{revoked_count}</b> unregistered email(s) from Google Drive."
+        )
+        bot.answer_callback_query(call.id, f"Revoked {revoked_count} emails.")
     # 4. Broadcast confirmation/cancellation
     elif data.startswith("confirm_broadcast:") or data.startswith("cancel_broadcast:"):
         parts = data.split(":")

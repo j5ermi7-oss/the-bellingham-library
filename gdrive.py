@@ -199,3 +199,39 @@ def revoke_file_or_folder(file_id, permission_id, email=None):
     except Exception as error:
         print(f"Unexpected error during revoke: {error}")
         raise error
+
+def get_service_account_email():
+    """Returns the email address of the service account."""
+    env_creds = os.getenv("SERVICE_ACCOUNT_JSON")
+    if env_creds:
+        try:
+            info = json.loads(env_creds)
+            return info.get("client_email", "").lower()
+        except Exception:
+            pass
+    if os.path.exists(SERVICE_ACCOUNT_FILE):
+        try:
+            with open(SERVICE_ACCOUNT_FILE, "r") as f:
+                info = json.load(f)
+            return info.get("client_email", "").lower()
+        except Exception:
+            pass
+    return ""
+
+def get_file_permissions(file_id):
+    """
+    Fetches all permissions for a Google Drive file or folder.
+    Returns: list of dicts with id, emailAddress, role, type, displayName
+    """
+    service = get_drive_service()
+    try:
+        permissions = service.permissions().list(
+            fileId=file_id,
+            fields="permissions(id, emailAddress, role, type, displayName)",
+            supportsAllDrives=True
+        ).execute()
+        return permissions.get('permissions', [])
+    except Exception as e:
+        print(f"Error fetching permissions for {file_id}: {e}")
+        return []
+

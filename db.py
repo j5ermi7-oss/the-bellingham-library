@@ -541,3 +541,59 @@ def is_banned(telegram_id, email=None):
     row = cursor.fetchone()
     conn.close()
     return row is not None
+
+# Security Audit Operations
+def get_all_registered_emails():
+    """
+    Returns a set of all registered lowercase emails of active authorized users.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT LOWER(TRIM(email)) FROM users WHERE email IS NOT NULL AND is_authorized = 1")
+    rows = cursor.fetchall()
+    conn.close()
+    return set(row[0] for row in rows if row[0])
+
+def get_all_tracked_file_ids():
+    """
+    Returns a list of all unique file_ids currently tracked in access_history or public_links.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DISTINCT file_id FROM access_history WHERE file_id IS NOT NULL
+        UNION 
+        SELECT DISTINCT file_id FROM public_links WHERE file_id IS NOT NULL
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [row[0] for row in rows if row[0]]
+
+def get_user_by_email(email):
+    """
+    Looks up a user record by registered or pending email address (case-insensitive).
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute(
+        "SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(%s)) OR LOWER(TRIM(pending_email)) = LOWER(TRIM(%s))",
+        (email, email)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def unauthorize_user_by_email(email):
+    """
+    Sets is_authorized = 0 for any user registered with the specified email.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE users SET is_authorized = 0 WHERE LOWER(TRIM(email)) = LOWER(TRIM(%s)) OR LOWER(TRIM(pending_email)) = LOWER(TRIM(%s))",
+        (email, email)
+    )
+    conn.commit()
+    conn.close()
+
+
