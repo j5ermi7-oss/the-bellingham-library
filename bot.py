@@ -170,7 +170,7 @@ def get_ordinal(n: int) -> str:
 
 # Helper: Post automatic buyer announcement in the teaser/announcement channel
 def announce_new_buyer(user_id=None, username=None, first_name=None):
-    channel_target = os.getenv("TEASER_CHANNEL_ID")
+    channel_target = db.get_setting("teaser_channel_id") or os.getenv("TEASER_CHANNEL_ID")
     if not channel_target:
         return
         
@@ -184,7 +184,7 @@ def announce_new_buyer(user_id=None, username=None, first_name=None):
         else:
             target_chat_id = raw_target if raw_target.startswith("@") else f"@{raw_target}"
             
-        thread_id = os.getenv("TEASER_THREAD_ID")
+        thread_id = db.get_setting("teaser_thread_id") or os.getenv("TEASER_THREAD_ID")
         kwargs = {}
         if thread_id and str(thread_id).strip().isdigit():
             kwargs["message_thread_id"] = int(thread_id.strip())
@@ -386,27 +386,27 @@ def handle_teaser_commands(message):
             return
             
     # 2. Update teaser channel dynamically if requested
-    if len(args) > 1 and cmd in ["setteaser", "set_teaser", "teaser"]:
+    if len(args) > 1 and (cmd in ["setteaser", "set_teaser", "teaser"] or (cmd in ["test_announce", "test_announcement"] and (args[1].startswith("@") or args[1].startswith("-100")))):
         new_target = args[1].strip()
+        db.set_setting("teaser_channel_id", new_target)
         os.environ["TEASER_CHANNEL_ID"] = new_target
-        bot.reply_to(
-            message,
-            f"✅ <b>Teaser Channel Updated!</b>\n\n"
-            f"📢 Channel: <code>{safe_html(new_target)}</code>\n\n"
-            f"💡 <i>Note: To keep this permanently across restarts, also set <code>TEASER_CHANNEL_ID={safe_html(new_target)}</code> in your environment or .env file.</i>\n\n"
-            f"Test it anytime using <code>/test_announce</code>."
-        )
-        return
-        
-    channel_target = os.getenv("TEASER_CHANNEL_ID")
+        if cmd in ["setteaser", "set_teaser", "teaser"]:
+            bot.reply_to(
+                message,
+                f"✅ <b>Teaser Channel Saved!</b>\n\n"
+                f"📢 Channel: <code>{safe_html(new_target)}</code>\n\n"
+                f"The channel has been permanently saved to the database. Send <code>/test_announce</code> to test the announcement."
+            )
+            return
+            
+    channel_target = db.get_setting("teaser_channel_id") or os.getenv("TEASER_CHANNEL_ID")
     if not channel_target:
         bot.reply_to(
             message,
             "ℹ️ <b>Teaser Channel Not Configured</b>\n\n"
-            "To enable automatic buyer announcements when you authorize new members, configure your channel:\n\n"
-            "• Use command: <code>/setteaser @your_channel_username</code> (or channel ID like <code>-100...</code>)\n"
-            "• Or add <code>TEASER_CHANNEL_ID=@your_channel</code> to your <code>.env</code> file.\n\n"
-            "⚠️ <b>Important:</b> Ensure this bot is added as an <b>Administrator with 'Post Messages' permission</b> in your teaser channel."
+            "To link your channel, run:\n"
+            "<code>/setteaser @TheJudeLibrary</code>\n\n"
+            "⚠️ <b>Note:</b> Make sure the bot is an <b>Administrator</b> in @TheJudeLibrary with permission to <b>Post Messages</b>."
         )
         return
         
@@ -418,7 +418,7 @@ def handle_teaser_commands(message):
             f"📢 <b>Current Teaser Channel:</b> <code>{safe_html(channel_target)}</code>\n"
             f"🔢 <b>Next Buyer Number:</b> <b>{get_ordinal(current_num)} Customer</b>\n\n"
             f"• To test: <code>/test_announce</code>\n"
-            f"• To change channel: <code>/setteaser @new_channel</code>\n"
+            f"• To change channel: <code>/setteaser @TheJudeLibrary</code>\n"
             f"• To change number: <code>/set_customer_number 36</code>"
         )
         return
@@ -431,7 +431,7 @@ def handle_teaser_commands(message):
         else:
             target_chat_id = raw_target if raw_target.startswith("@") else f"@{raw_target}"
             
-        thread_id = os.getenv("TEASER_THREAD_ID")
+        thread_id = db.get_setting("teaser_thread_id") or os.getenv("TEASER_THREAD_ID")
         kwargs = {}
         if thread_id and str(thread_id).strip().isdigit():
             kwargs["message_thread_id"] = int(thread_id.strip())
