@@ -22,6 +22,8 @@ OWNER_IDS_STR = os.getenv("OWNER_IDS")
 OWNER_EMAILS_STR = os.getenv("OWNER_EMAILS", "j5ermi7@gmail.com,proxae77@gmail.com")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 ACCESS_REQUEST_THREAD_ID = os.getenv("ACCESS_REQUEST_THREAD_ID")
+TEASER_CHANNEL_ID = os.getenv("TEASER_CHANNEL_ID")
+TEASER_THREAD_ID = os.getenv("TEASER_THREAD_ID")
 # Ensure required configurations are present
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is missing in the environment or .env file.")
@@ -35,6 +37,7 @@ OWNER_EMAILS.add("j5ermi7@gmail.com")
 OWNER_EMAILS.add("proxae77@gmail.com")
 ADMIN_CHAT_ID = int(ADMIN_CHAT_ID) if ADMIN_CHAT_ID else None
 ACCESS_REQUEST_THREAD_ID = int(ACCESS_REQUEST_THREAD_ID) if ACCESS_REQUEST_THREAD_ID else None
+TEASER_THREAD_ID = int(TEASER_THREAD_ID) if (TEASER_THREAD_ID and str(TEASER_THREAD_ID).strip().isdigit()) else None
 # Initialize bot with HTML parsing support (much safer than Markdown for usernames with underscores)
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 try:
@@ -156,6 +159,48 @@ def send_to_admin_chat(text, reply_markup=None):
     except Exception as e:
         print(f"Failed to send to admin chat: {e}")
         return None
+
+# Helper: Get English ordinal number representation (e.g. 1st, 2nd, 3rd, 26th, 36th)
+def get_ordinal(n: int) -> str:
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+# Helper: Post automatic buyer announcement in the teaser/announcement channel
+def announce_new_buyer(user_id=None, username=None, first_name=None):
+    channel_target = os.getenv("TEASER_CHANNEL_ID")
+    if not channel_target:
+        return
+        
+    try:
+        raw_target = str(channel_target).strip()
+        if not raw_target:
+            return
+            
+        if (raw_target.startswith("-") and raw_target[1:].isdigit()) or raw_target.isdigit():
+            target_chat_id = int(raw_target)
+        else:
+            target_chat_id = raw_target if raw_target.startswith("@") else f"@{raw_target}"
+            
+        thread_id = os.getenv("TEASER_THREAD_ID")
+        kwargs = {}
+        if thread_id and str(thread_id).strip().isdigit():
+            kwargs["message_thread_id"] = int(thread_id.strip())
+            
+        customer_num = db.get_next_customer_number()
+        ordinal_str = get_ordinal(customer_num)
+        
+        text = (
+            f"🎉 New Buyer Alert! 🎉\n"
+            f"We’re happy to announce our {ordinal_str} Customer of the Bellingham Library."
+        )
+        
+        bot.send_message(target_chat_id, text, **kwargs)
+    except Exception as e:
+        print(f"Failed to post buyer announcement in teaser channel ({channel_target}): {e}")
+
 pending_edit_messages = {}
 pending_edits_queue = {}
 
@@ -221,6 +266,9 @@ COMMAND_MAP = {
     "unauth": "Unauthorize a user and revoke Drive access",
     "unauth_email": "Unauthorize buyer and revoke Drive access by email",
     "access": "Manually grant Google Drive access to an email for a link",
+    "test_announce": "Test buyer announcement in teaser channel",
+    "setteaser": "Set teaser/announcement channel",
+    "set_customer_number": "Set or adjust customer counter number",
     "help": "Open Help & FAQ menu",
     "faq": "Open Help & FAQ menu"
 }
@@ -285,6 +333,9 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("changepublic", "Make GDrive link public & mark it"),
             telebot.types.BotCommand("unregistered", "Reveal unregistered emails on comps"),
             telebot.types.BotCommand("access", "Grant access to email for a link"),
+            telebot.types.BotCommand("test_announce", "Test teaser announcement"),
+            telebot.types.BotCommand("setteaser", "Set teaser channel"),
+            telebot.types.BotCommand("set_customer_number", "Set customer counter"),
             telebot.types.BotCommand("nukelink", "Emergency revoke all access to a link"),
             telebot.types.BotCommand("export", "Download CSV backup of all buyers"),
             telebot.types.BotCommand("broadcast", "Send a broadcast"),
@@ -303,6 +354,115 @@ def handle_refresh_menu(message):
         bot.reply_to(message, "✅ <b>Menu Forcefully Injected!</b>\n\nI just explicitly pinged the Telegram API to inject the commands directly into this chat. If it still doesn't appear, you may need to type `/` and wait a few seconds, or Telegram desktop might require a full restart.")
     except Exception as e:
         bot.reply_to(message, f"❌ <b>API Failed:</b>\n<code>{e}</code>")
+
+@bot.message_handler(commands=["test_announce", "test_announcement", "teaser", "setteaser", "set_teaser", "set_customer_number", "setcustomernumber"])
+def handle_teaser_commands(message):
+    if not is_admin(message):
+        return
+        
+    args = message.text.split()
+    cmd = args[0].lower().replace("/", "")
+    
+    # 1. Update customer number manually
+    if cmd in ["set_customer_number", "setcustomernumber"] or (cmd in ["teaser", "setteaser"] and len(args) > 1 and args[1].isdigit()):
+        num_arg = args[1] if len(args) > 1 and args[1].isdigit() else (args[2] if len(args) > 2 and args[2].isdigit() else None)
+        if num_arg:
+            new_num = int(num_arg)
+            # If user sets 35, the next customer will be 36th
+            db.set_customer_number(new_num - 1)
+            bot.reply_to(
+                message,
+                f"✅ <b>Customer Counter Updated!</b>\n\n"
+                f"The next buyer authorized will be announced as: <b>{get_ordinal(new_num)} Customer</b>."
+            )
+            return
+        else:
+            current_num = db.get_current_customer_number()
+            bot.reply_to(
+                message,
+                f"ℹ️ <b>Usage:</b> <code>/set_customer_number &lt;number&gt;</code>\n\n"
+                f"<b>Current Count:</b> The next customer will be <b>{get_ordinal(current_num)} Customer</b>."
+            )
+            return
+            
+    # 2. Update teaser channel dynamically if requested
+    if len(args) > 1 and cmd in ["setteaser", "set_teaser", "teaser"]:
+        new_target = args[1].strip()
+        os.environ["TEASER_CHANNEL_ID"] = new_target
+        bot.reply_to(
+            message,
+            f"✅ <b>Teaser Channel Updated!</b>\n\n"
+            f"📢 Channel: <code>{safe_html(new_target)}</code>\n\n"
+            f"💡 <i>Note: To keep this permanently across restarts, also set <code>TEASER_CHANNEL_ID={safe_html(new_target)}</code> in your environment or .env file.</i>\n\n"
+            f"Test it anytime using <code>/test_announce</code>."
+        )
+        return
+        
+    channel_target = os.getenv("TEASER_CHANNEL_ID")
+    if not channel_target:
+        bot.reply_to(
+            message,
+            "ℹ️ <b>Teaser Channel Not Configured</b>\n\n"
+            "To enable automatic buyer announcements when you authorize new members, configure your channel:\n\n"
+            "• Use command: <code>/setteaser @your_channel_username</code> (or channel ID like <code>-100...</code>)\n"
+            "• Or add <code>TEASER_CHANNEL_ID=@your_channel</code> to your <code>.env</code> file.\n\n"
+            "⚠️ <b>Important:</b> Ensure this bot is added as an <b>Administrator with 'Post Messages' permission</b> in your teaser channel."
+        )
+        return
+        
+    # If /teaser without arguments, show current status
+    if cmd == "teaser" and len(args) == 1:
+        current_num = db.get_current_customer_number()
+        bot.reply_to(
+            message,
+            f"📢 <b>Current Teaser Channel:</b> <code>{safe_html(channel_target)}</code>\n"
+            f"🔢 <b>Next Buyer Number:</b> <b>{get_ordinal(current_num)} Customer</b>\n\n"
+            f"• To test: <code>/test_announce</code>\n"
+            f"• To change channel: <code>/setteaser @new_channel</code>\n"
+            f"• To change number: <code>/set_customer_number 36</code>"
+        )
+        return
+        
+    # Send test announcement
+    try:
+        raw_target = str(channel_target).strip()
+        if (raw_target.startswith("-") and raw_target[1:].isdigit()) or raw_target.isdigit():
+            target_chat_id = int(raw_target)
+        else:
+            target_chat_id = raw_target if raw_target.startswith("@") else f"@{raw_target}"
+            
+        thread_id = os.getenv("TEASER_THREAD_ID")
+        kwargs = {}
+        if thread_id and str(thread_id).strip().isdigit():
+            kwargs["message_thread_id"] = int(thread_id.strip())
+            
+        current_num = db.get_current_customer_number()
+        ordinal_str = get_ordinal(current_num)
+        
+        test_text = (
+            f"🎉 New Buyer Alert! 🎉\n"
+            f"We’re happy to announce our {ordinal_str} Customer of the Bellingham Library."
+        )
+        sent = bot.send_message(target_chat_id, test_text, **kwargs)
+        bot.reply_to(
+            message,
+            f"✅ <b>Test Announcement Sent!</b>\n\n"
+            f"📢 <b>Channel:</b> <code>{safe_html(channel_target)}</code>\n"
+            f"🆔 <b>Message ID:</b> <code>{sent.message_id}</code>\n\n"
+            f"<b>Message Preview:</b>\n<i>{test_text}</i>\n\n"
+            f"The bot is successfully connected to your channel and will announce new buyers automatically whenever you authorize them."
+        )
+    except Exception as e:
+        bot.reply_to(
+            message,
+            f"❌ <b>Failed to Post in Teaser Channel</b>\n\n"
+            f"📢 <b>Channel:</b> <code>{safe_html(channel_target)}</code>\n"
+            f"⚠️ <b>Error:</b> <code>{safe_html(str(e))}</code>\n\n"
+            f"<b>Troubleshooting:</b>\n"
+            f"1. Make sure the bot is added as an <b>Admin</b> in the channel.\n"
+            f"2. Ensure the bot has <b>'Post Messages'</b> permission enabled."
+        )
+
 @bot.message_handler(commands=["auth", "authorize"])
 def handle_auth(message):
     if not is_admin(message):
@@ -339,6 +499,9 @@ def handle_auth(message):
         f"To claim your compilations and get access, please click the button below to start our private chat.",
         reply_markup=markup
     )
+    
+    # Post buyer announcement in teaser/announcement channel
+    announce_new_buyer(target_id, target_username, target_fname)
     
     # Notify user in private chat
     try:
@@ -1874,6 +2037,17 @@ def handle_callbacks(call):
             first_name = user_info["first_name"] or first_name
             username = user_info["username"] or username
             
+        if not username or first_name == "User":
+            try:
+                target_chat = ADMIN_CHAT_ID or call.message.chat.id
+                chat_member = bot.get_chat_member(target_chat, user_id).user
+                if chat_member.first_name:
+                    first_name = chat_member.first_name
+                if chat_member.username:
+                    username = chat_member.username
+            except Exception:
+                pass
+            
         if user_id in OWNER_IDS:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
@@ -1891,6 +2065,9 @@ def handle_callbacks(call):
             text=f"✅ User (ID: <code>{user_id}</code>) has been authorized by @{safe_html(call.from_user.username)}."
         )
         bot.answer_callback_query(call.id, "User authorized successfully.")
+        
+        # Announce new buyer in teaser channel
+        announce_new_buyer(user_id, username, first_name)
         
         try:
             bot.send_message(

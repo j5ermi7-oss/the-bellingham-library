@@ -84,6 +84,14 @@ def init_db():
     )
     """)
     
+    # 6. Bot Settings
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS bot_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+    
     conn.commit()
     conn.close()
 # Username Cache Operations
@@ -595,5 +603,63 @@ def unauthorize_user_by_email(email):
     )
     conn.commit()
     conn.close()
+
+# Bot Settings & Customer Count Operations
+def get_setting(key, default=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM bot_settings WHERE key = %s", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else default
+
+def set_setting(key, value):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO bot_settings (key, value)
+        VALUES (%s, %s)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    """, (key, str(value)))
+    conn.commit()
+    conn.close()
+
+def get_current_customer_number():
+    val = get_setting("customer_count")
+    if val is not None:
+        try:
+            return int(val)
+        except Exception:
+            pass
+    return int(os.getenv("CUSTOMER_COUNT_START", "36"))
+
+def get_next_customer_number():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM bot_settings WHERE key = 'customer_count'")
+    row = cursor.fetchone()
+    if not row:
+        start_val = int(os.getenv("CUSTOMER_COUNT_START", "36"))
+        cursor.execute("""
+            INSERT INTO bot_settings (key, value)
+            VALUES ('customer_count', %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (str(start_val),))
+        conn.commit()
+        assigned_num = start_val
+    else:
+        try:
+            current_num = int(row[0])
+            assigned_num = current_num + 1
+        except Exception:
+            assigned_num = int(os.getenv("CUSTOMER_COUNT_START", "36"))
+        cursor.execute("UPDATE bot_settings SET value = %s WHERE key = 'customer_count'", (str(assigned_num),))
+        conn.commit()
+    conn.close()
+    return assigned_num
+
+def set_customer_number(num):
+    set_setting("customer_count", str(num))
+
 
 
