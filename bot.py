@@ -193,7 +193,7 @@ def announce_new_buyer(user_id=None, username=None, first_name=None):
         ordinal_str = get_ordinal(customer_num)
         
         text = (
-            f"🎉 New Buyer Alert! 🎉\n"
+            f"<b>🎉 New Buyer Alert! 🎉</b>\n"
             f"We’re happy to announce our {ordinal_str} Customer of the Bellingham Library."
         )
         
@@ -440,7 +440,7 @@ def handle_teaser_commands(message):
         ordinal_str = get_ordinal(current_num)
         
         test_text = (
-            f"🎉 New Buyer Alert! 🎉\n"
+            f"<b>🎉 New Buyer Alert! 🎉</b>\n"
             f"We’re happy to announce our {ordinal_str} Customer of the Bellingham Library."
         )
         sent = bot.send_message(target_chat_id, test_text, **kwargs)
