@@ -154,8 +154,8 @@ def setup_scheduler(bot):
 
     @bot.callback_query_handler(func=lambda call: call.data.startswith('pt_'))
     def handle_postteaser_callback(call):
-        from bot import is_admin
-        if not is_admin(call.message):
+        from bot import is_callback_admin
+        if not is_callback_admin(call):
             return
             
         parts = call.data.split(':')
