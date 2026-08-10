@@ -42,8 +42,8 @@ def build_inline_keyboard(options, prefix, user_id):
 
 def clean_competition_from_title(title):
     # E.g. "Jude Bellingham (Home) vs. VfB Stuttgart - Bundesliga (20.11.2021)" -> "Jude Bellingham (Home) vs. VfB Stuttgart (20.11.2021)"
-    # Replaces ' - Competition Name (' with ' ('
-    return re.sub(r'\s*-\s*[^-]+(\s*\([\d.]+\))', r'\1', title)
+    # Guarantees a space before the bracket even if the original didn't have one
+    return re.sub(r'\s*-\s*[^-]+?\s*(\([\d.]+\))', r' \1', title)
 
 def map_season_to_thread(parent_name):
     """Maps the GDrive folder name (e.g. 20-21) to the Premium channel's topic thread ID."""
@@ -148,7 +148,7 @@ def setup_scheduler(bot):
         import psycopg2.extras
         conn = db.get_db_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cursor.execute("SELECT id, teaser_caption, scheduled_time FROM scheduled_posts WHERE status = 'pending' ORDER BY scheduled_time ASC")
+        cursor.execute("SELECT id, teaser_caption, premium_caption, scheduled_time FROM scheduled_posts WHERE status = 'pending' ORDER BY scheduled_time ASC")
         pending = cursor.fetchall()
         conn.close()
         
@@ -156,18 +156,18 @@ def setup_scheduler(bot):
             bot.reply_to(message, "📭 <b>Queue Empty:</b> There are no compilations scheduled right now.")
             return
             
-        text = f"📅 <b>Scheduled Compilations ({len(pending)}):</b>\n\n"
+        bot.reply_to(message, f"📅 <b>Scheduled Compilations ({len(pending)}):</b>", parse_mode="HTML")
+        
         for idx, post in enumerate(pending, 1):
             time_str = post['scheduled_time'].strftime("%b %d, %I:%M %p (EAT)")
-            # Just extract the title from the teaser caption for a clean summary
-            import re
-            title_match = re.search(r'<b>(.*?)</b>', post['teaser_caption'])
-            title = title_match.group(1) if title_match else f"Post #{post['id']}"
             
-            text += f"<b>{idx}. {title}</b>\n"
-            text += f"   └ 🕒 <i>Fires at {time_str}</i>\n\n"
-            
-        bot.reply_to(message, text, parse_mode="HTML")
+            msg = (
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔥 <b>POST #{idx}</b> — Fires at <b>{time_str}</b>\n\n"
+                f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n{post['teaser_caption']}\n\n"
+                f"💎 <b>Premium Preview (Group):</b>\n{post['premium_caption']}"
+            )
+            bot.send_message(message.chat.id, msg, parse_mode="HTML", disable_web_page_preview=True)
 
     @bot.message_handler(content_types=['photo'])
     def handle_photo(message):
