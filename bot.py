@@ -1372,7 +1372,7 @@ def handle_changepublic(message):
             chat_id=message.chat.id,
             message_id=loading_msg.message_id
         )
-@bot.message_handler(commands=["broadcast", "brodcast"])
+@bot.message_handler(commands=["broadcast", "brodcast"], content_types=["text", "photo", "video", "document"])
 def handle_broadcast(message):
     if not is_admin(message):
         return
@@ -1382,20 +1382,41 @@ def handle_broadcast(message):
         bot.reply_to(message, "❌ Please use the `/broadcast` command in my private DMs, not in the group chat.")
         return
         
-    text = message.text.replace("/broadcast", "", 1).replace("/brodcast", "", 1).strip()
+    raw_text = message.text or message.caption or ""
+    text = raw_text.replace("/broadcast", "", 1).replace("/brodcast", "", 1).strip()
+    
     if not text:
-        bot.reply_to(message, "❌ Usage: `/broadcast [your message]`")
+        bot.reply_to(message, "❌ Usage: `/broadcast [your message]` (You can also attach a photo!)")
         return
         
     if not ADMIN_CHAT_ID:
         bot.reply_to(message, "❌ ADMIN_CHAT_ID is not configured. Cannot send broadcast to announcement topic.")
         return
         
-    pending_broadcasts[message.from_user.id] = text
+    photo_id = message.photo[-1].file_id if message.photo else None
+        
+    pending_broadcasts[message.from_user.id] = {
+        "text": text,
+        "photo": photo_id
+    }
     
     markup = InlineKeyboardMarkup()
     markup.row(
-        InlineKeyboardButton("✅ Announcements", callback_data=f"confirm_broadcast:ann:{message.from_user.id}"),
+        InlineKeyboardButton("📢 Teaser Channel", callback_data=f"confirm_broadcast:teaser:{message.from_user.id}"),
+        InlineKeyboardButton("✅ Announcements", callback_data=f"confirm_broadcast:ann:{message.from_user.id}")
+    )
+    markup.row(
+        InlineKeyboardButton("📚 20-21", callback_data=f"confirm_broadcast:2021:{message.from_user.id}"),
+        InlineKeyboardButton("📚 21-22", callback_data=f"confirm_broadcast:2122:{message.from_user.id}"),
+        InlineKeyboardButton("📚 22-23", callback_data=f"confirm_broadcast:2223:{message.from_user.id}")
+    )
+    markup.row(
+        InlineKeyboardButton("📚 23-24", callback_data=f"confirm_broadcast:2324:{message.from_user.id}"),
+        InlineKeyboardButton("📚 24-25", callback_data=f"confirm_broadcast:2425:{message.from_user.id}"),
+        InlineKeyboardButton("📚 25-26", callback_data=f"confirm_broadcast:2526:{message.from_user.id}")
+    )
+    markup.row(
+        InlineKeyboardButton("📚 26-27", callback_data=f"confirm_broadcast:2627:{message.from_user.id}"),
         InlineKeyboardButton("✅ Access Requests", callback_data=f"confirm_broadcast:acc:{message.from_user.id}")
     )
     markup.row(
@@ -1404,12 +1425,20 @@ def handle_broadcast(message):
     )
     markup.row(InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{message.from_user.id}"))
     
-    bot.reply_to(
-        message,
-        f"📢 <b>Broadcast Preview:</b>\n\n{safe_html(text)}\n\n"
-        f"<i>Where do you want to send this broadcast?</i>",
-        reply_markup=markup
-    )
+    if photo_id:
+        bot.send_photo(
+            message.chat.id,
+            photo=photo_id,
+            caption=f"📢 <b>Broadcast Preview:</b>\n\n{text}\n\n<i>Where do you want to send this broadcast?</i>",
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
+    else:
+        bot.reply_to(
+            message,
+            f"📢 <b>Broadcast Preview:</b>\n\n{safe_html(text)}\n\n<i>Where do you want to send this broadcast?</i>",
+            reply_markup=markup
+        )
 @bot.message_handler(commands=["user", "lookup"])
 def handle_user_lookup(message):
     if not is_admin(message):
@@ -2236,9 +2265,9 @@ def handle_callbacks(call):
             bot.answer_callback_query(call.id, "You cannot confirm/cancel someone else's broadcast.", show_alert=True)
             return
             
-        text = pending_broadcasts.pop(user_id, None)
+        data_dict = pending_broadcasts.pop(user_id, None)
         
-        if not text:
+        if not data_dict:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
@@ -2246,6 +2275,14 @@ def handle_callbacks(call):
             )
             bot.answer_callback_query(call.id, "Expired broadcast.")
             return
+            
+        # Support for older pending broadcasts that just stored text
+        if isinstance(data_dict, str):
+            text = data_dict
+            photo_id = None
+        else:
+            text = data_dict["text"]
+            photo_id = data_dict["photo"]
             
         if action == "confirm_broadcast":
             try:
@@ -2258,9 +2295,37 @@ def handle_callbacks(call):
                         raise ValueError("ACCESS_REQUEST_THREAD_ID is not set in your .env file.")
                     topic_id = ACCESS_REQUEST_THREAD_ID
                     topic_name = "Access Requests"
+                elif target_topic == "2021":
+                    topic_id = 2167; topic_name = "20-21"
+                elif target_topic == "2122":
+                    topic_id = 2130; topic_name = "21-22"
+                elif target_topic == "2223":
+                    topic_id = 1721; topic_name = "22-23"
+                elif target_topic == "2324":
+                    topic_id = 2168; topic_name = "23-24"
+                elif target_topic == "2425":
+                    topic_id = 2169; topic_name = "24-25"
+                elif target_topic == "2526":
+                    topic_id = 1742; topic_name = "25-26"
+                elif target_topic == "2627":
+                    topic_id = 1837; topic_name = "26-27"
+                elif target_topic == "teaser":
+                    teaser_chat_id = db.get_setting("teaser_channel_id") or os.getenv("TEASER_CHANNEL_ID") or "@thejudelibrary"
+                    if photo_id:
+                        bot.send_photo(teaser_chat_id, photo=photo_id, caption=text, parse_mode="HTML")
+                    else:
+                        bot.send_message(teaser_chat_id, text, parse_mode="HTML")
+                        
+                    bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text=f"✅ <b>Broadcast Sent to Teaser Channel!</b>\n\n{safe_html(text)}"
+                    )
+                    bot.answer_callback_query(call.id, "Broadcast sent!")
+                    return
                 elif target_topic == "gen":
-                    # Put the text back so it doesn't expire before the next click
-                    pending_broadcasts[user_id] = text
+                    # Put the data back so it doesn't expire before the next click
+                    pending_broadcasts[user_id] = data_dict
                     
                     # Instead of sending immediately, ask for reply mode
                     markup = InlineKeyboardMarkup()
@@ -2284,7 +2349,10 @@ def handle_callbacks(call):
                     success_count = 0
                     for uid in authorized_users:
                         try:
-                            bot.send_message(uid, f"{safe_html(text)}")
+                            if photo_id:
+                                bot.send_photo(uid, photo=photo_id, caption=text, parse_mode="HTML")
+                            else:
+                                bot.send_message(uid, f"{safe_html(text)}")
                             success_count += 1
                         except Exception:
                             pass
@@ -2300,11 +2368,11 @@ def handle_callbacks(call):
                     topic_id = None
                     topic_name = "Main Chat"
                     
-                bot.send_message(
-                    ADMIN_CHAT_ID,
-                    f"{safe_html(text)}",
-                    message_thread_id=topic_id
-                )
+                if photo_id:
+                    bot.send_photo(ADMIN_CHAT_ID, photo=photo_id, caption=text, parse_mode="HTML", message_thread_id=topic_id)
+                else:
+                    bot.send_message(ADMIN_CHAT_ID, f"{safe_html(text)}", message_thread_id=topic_id)
+                    
                 bot.edit_message_text(
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
@@ -2335,23 +2403,32 @@ def handle_callbacks(call):
             bot.answer_callback_query(call.id, "You cannot confirm someone else's broadcast.", show_alert=True)
             return
             
+        data_dict = pending_broadcasts.pop(user_id, None)
+        if not data_dict:
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="❌ This broadcast has expired.")
+            return
+            
+        if isinstance(data_dict, str):
+            text = data_dict
+            photo_id = None
+        else:
+            text = data_dict["text"]
+            photo_id = data_dict["photo"]
+            
         if action == "send_gen_default":
-            text = pending_broadcasts.pop(user_id, None)
-            if not text:
-                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="❌ This broadcast has expired.")
-                return
             try:
-                bot.send_message(ADMIN_CHAT_ID, f"{safe_html(text)}", message_thread_id=5)
+                if photo_id:
+                    bot.send_photo(ADMIN_CHAT_ID, photo=photo_id, caption=text, parse_mode="HTML", message_thread_id=5)
+                else:
+                    bot.send_message(ADMIN_CHAT_ID, f"{safe_html(text)}", message_thread_id=5)
                 bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"✅ <b>Broadcast Sent to General Chat!</b>\n\n{safe_html(text)}")
                 bot.answer_callback_query(call.id)
             except Exception as e:
                 bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f"❌ <b>Failed to send broadcast:</b>\n{e}")
         
         elif action == "send_gen_reply":
-            text = pending_broadcasts.get(user_id, None)
-            if not text:
-                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text="❌ This broadcast has expired.")
-                return
+            # Put data back for the next step
+            pending_broadcasts[user_id] = data_dict
             
             msg = bot.edit_message_text(
                 chat_id=call.message.chat.id,
@@ -2361,16 +2438,24 @@ def handle_callbacks(call):
                      "Type /cancel to abort."
             )
             bot.register_next_step_handler(msg, process_broadcast_reply, user_id)
+
 def process_broadcast_reply(message, user_id):
     if message.text and message.text.startswith("/"):
         bot.reply_to(message, "Broadcast cancelled.")
         pending_broadcasts.pop(user_id, None)
         return
         
-    text = pending_broadcasts.pop(user_id, None)
-    if not text:
+    data_dict = pending_broadcasts.pop(user_id, None)
+    if not data_dict:
         bot.reply_to(message, "❌ Broadcast expired.")
         return
+        
+    if isinstance(data_dict, str):
+        text = data_dict
+        photo_id = None
+    else:
+        text = data_dict["text"]
+        photo_id = data_dict["photo"]
         
     link = message.text.strip()
     # Link format: https://t.me/c/4265920368/5/643
@@ -2378,12 +2463,22 @@ def process_broadcast_reply(message, user_id):
         parts = link.rstrip("/").split("/")
         message_id = int(parts[-1])
         
-        bot.send_message(
-            ADMIN_CHAT_ID,
-            f"{safe_html(text)}",
-            message_thread_id=5,
-            reply_to_message_id=message_id
-        )
+        if photo_id:
+            bot.send_photo(
+                ADMIN_CHAT_ID,
+                photo=photo_id,
+                caption=text,
+                parse_mode="HTML",
+                message_thread_id=5,
+                reply_to_message_id=message_id
+            )
+        else:
+            bot.send_message(
+                ADMIN_CHAT_ID,
+                f"{safe_html(text)}",
+                message_thread_id=5,
+                reply_to_message_id=message_id
+            )
         bot.reply_to(message, f"✅ <b>Broadcast Sent to General Chat as a reply!</b>\n\n{safe_html(text)}")
     except Exception as e:
         bot.reply_to(message, f"❌ <b>Failed to send broadcast as reply:</b>\nCheck if the link is correct.\nError: {e}")
