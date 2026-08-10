@@ -683,7 +683,20 @@ def add_scheduled_post(file_id, cover_file_id, teaser_caption, premium_caption, 
     cursor.execute("""
         INSERT INTO scheduled_posts (file_id, cover_file_id, teaser_caption, premium_caption, premium_thread_id, scheduled_time)
         VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
     """, (file_id, cover_file_id, teaser_caption, premium_caption, premium_thread_id, scheduled_time))
+    post_id = cursor.fetchone()[0]
+    conn.commit()
+    conn.close()
+    return post_id
+
+def update_scheduled_post_caption(post_id, caption_type, new_caption):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if caption_type == 'teaser':
+        cursor.execute("UPDATE scheduled_posts SET teaser_caption = %s WHERE id = %s", (new_caption, post_id))
+    elif caption_type == 'premium':
+        cursor.execute("UPDATE scheduled_posts SET premium_caption = %s WHERE id = %s", (new_caption, post_id))
     conn.commit()
     conn.close()
 
@@ -698,6 +711,14 @@ def get_due_posts(current_time):
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+def get_scheduled_post(post_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("SELECT * FROM scheduled_posts WHERE id = %s", (post_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 def mark_post_completed(post_id):
     conn = get_db_connection()

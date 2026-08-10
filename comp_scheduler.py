@@ -148,7 +148,7 @@ def setup_scheduler(bot):
         import psycopg2.extras
         conn = db.get_db_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cursor.execute("SELECT id, teaser_caption, premium_caption, scheduled_time FROM scheduled_posts WHERE status = 'pending' ORDER BY scheduled_time ASC")
+        cursor.execute("SELECT id, cover_file_id, teaser_caption, premium_caption, scheduled_time FROM scheduled_posts WHERE status = 'pending' ORDER BY scheduled_time ASC")
         pending = cursor.fetchall()
         conn.close()
         
@@ -161,13 +161,25 @@ def setup_scheduler(bot):
         for idx, post in enumerate(pending, 1):
             time_str = post['scheduled_time'].strftime("%b %d, %I:%M %p (EAT)")
             
-            msg = (
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔥 <b>POST #{idx}</b> — Fires at <b>{time_str}</b>\n\n"
-                f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n{post['teaser_caption']}\n\n"
-                f"💎 <b>Premium Preview (Group):</b>\n{post['premium_caption']}"
+            bot.send_message(message.chat.id, f"━━━━━━━━━━━━━━━━━━━━\n🔥 <b>POST #{idx}</b> — Fires at <b>{time_str}</b>", parse_mode="HTML")
+            
+            bot.send_photo(
+                chat_id=message.chat.id,
+                photo=post['cover_file_id'],
+                caption=f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n\n{post['teaser_caption']}",
+                parse_mode="HTML"
             )
-            bot.send_message(message.chat.id, msg, parse_mode="HTML", disable_web_page_preview=True)
+            
+            bot.send_photo(
+                chat_id=message.chat.id,
+                photo=post['cover_file_id'],
+                caption=f"💎 <b>Premium Preview (Group):</b>\n\n{post['premium_caption']}",
+                parse_mode="HTML"
+            )
+            
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton(f"✏️ Edit Post #{post['id']}", callback_data=f"pt_edit:{post['id']}:{message.from_user.id}"))
+            bot.send_message(message.chat.id, f"Options for Post #{post['id']}:", reply_markup=markup)
 
     @bot.message_handler(content_types=['photo'])
     def handle_photo(message):
@@ -279,8 +291,35 @@ def setup_scheduler(bot):
                 state['metadata']['size_gb'] = value
                 check_fallback_requirements(bot, user_id, chat_id, msg_id)
 
+        elif action == "pt_edit":
+            post_id = value
+            markup = InlineKeyboardMarkup()
+            markup.row(
+                InlineKeyboardButton("Edit Teaser", callback_data=f"pt_edt_t:{post_id}:{user_id}"),
+                InlineKeyboardButton("Edit Premium", callback_data=f"pt_edt_p:{post_id}:{user_id}")
+            )
+            markup.add(InlineKeyboardButton("🔙 Cancel", callback_data=f"pt_edt_c:{post_id}:{user_id}"))
+            bot.edit_message_text(f"What do you want to edit for Post #{post_id}?", chat_id, msg_id, reply_markup=markup)
+            
+        elif action == "pt_edt_t":
+            post_id = value
+            user_states[user_id] = {'step': 'waiting_for_edit_teaser', 'edit_post_id': post_id, 'msg_id': msg_id}
+            bot.edit_message_text(f"✍️ <b>Please send the new Teaser caption for Post #{post_id}:</b>\n\n<i>(You can use HTML tags like &lt;b&gt; and &lt;a href&gt;)</i>", chat_id, msg_id, parse_mode="HTML")
+            
+        elif action == "pt_edt_p":
+            post_id = value
+            user_states[user_id] = {'step': 'waiting_for_edit_premium', 'edit_post_id': post_id, 'msg_id': msg_id}
+            bot.edit_message_text(f"✍️ <b>Please send the new Premium caption for Post #{post_id}:</b>\n\n<i>(You can use HTML tags like &lt;b&gt; and &lt;a href&gt;)</i>", chat_id, msg_id, parse_mode="HTML")
+            
+        elif action == "pt_edt_c":
+            post_id = value
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton(f"✏️ Edit Post #{post_id}", callback_data=f"pt_edit:{post_id}:{user_id}"))
+            bot.edit_message_text(f"Options for Post #{post_id}:", chat_id, msg_id, reply_markup=markup)
+
     @bot.message_handler(func=lambda message: message.from_user.id in user_states and user_states[message.from_user.id].get('step') in [
-        'waiting_for_custom_commentary', 'waiting_for_custom_fps', 'waiting_for_custom_resolution', 'waiting_for_custom_duration', 'waiting_for_custom_size'
+        'waiting_for_custom_commentary', 'waiting_for_custom_fps', 'waiting_for_custom_resolution', 'waiting_for_custom_duration', 'waiting_for_custom_size',
+        'waiting_for_edit_teaser', 'waiting_for_edit_premium'
     ])
     def handle_custom_text(message):
         user_id = message.from_user.id
@@ -288,6 +327,42 @@ def setup_scheduler(bot):
         chat_id = message.chat.id
         msg_id = state.get('msg_id')
         
+        if state['step'] in ['waiting_for_edit_teaser', 'waiting_for_edit_premium']:
+            post_id = state['edit_post_id']
+            caption_type = 'teaser' if state['step'] == 'waiting_for_edit_teaser' else 'premium'
+            new_text = message.text.strip()
+            
+            # Update Database
+            db.update_scheduled_post_caption(post_id, caption_type, new_text)
+            
+            # Get updated post
+            post = db.get_scheduled_post(post_id)
+            
+            # Clear state
+            user_states.pop(user_id, None)
+            
+            bot.send_message(chat_id, f"✅ <b>Successfully updated the {caption_type.title()} caption for Post #{post_id}!</b>", parse_mode="HTML")
+            
+            # Resend previews
+            bot.send_photo(
+                chat_id=chat_id,
+                photo=post['cover_file_id'],
+                caption=f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n\n{post['teaser_caption']}",
+                parse_mode="HTML"
+            )
+            
+            bot.send_photo(
+                chat_id=chat_id,
+                photo=post['cover_file_id'],
+                caption=f"💎 <b>Premium Preview:</b>\n\n{post['premium_caption']}",
+                parse_mode="HTML"
+            )
+            
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton(f"✏️ Edit Post #{post_id}", callback_data=f"pt_edit:{post_id}:{user_id}"))
+            bot.send_message(chat_id, f"Need to make further changes to Post #{post_id}?", reply_markup=markup)
+            return
+
         if state['step'] == 'waiting_for_custom_commentary':
             text = message.text.strip().title()
             if not text.endswith("Commentary") and text != "Stadium Sound":
@@ -382,7 +457,7 @@ def finalize_postteaser(bot, user_id, chat_id, msg_id):
     
     next_time = get_next_posting_time()
     
-    db.add_scheduled_post(
+    post_id = db.add_scheduled_post(
         file_id=state['file_id'],
         cover_file_id=state['cover_file_id'],
         teaser_caption=teaser_caption,
@@ -393,14 +468,25 @@ def finalize_postteaser(bot, user_id, chat_id, msg_id):
     
     time_str = next_time.strftime("%I:%M %p (EAT) on %b %d")
     
-    success_msg = (
-        f"✅ <b>Compilation Scheduled!</b>\n\n"
-        f"🕒 <b>Posting Time:</b> {time_str}\n\n"
-        f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n{teaser_caption}\n\n"
-        f"💎 <b>Premium Preview:</b>\n{premium_caption}"
+    if msg_id:
+        bot.delete_message(chat_id, msg_id)
+        
+    bot.send_message(chat_id, f"✅ <b>Compilation Scheduled for {time_str}!</b>", parse_mode="HTML")
+    
+    bot.send_photo(
+        chat_id=chat_id,
+        photo=state['cover_file_id'],
+        caption=f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n\n{teaser_caption}",
+        parse_mode="HTML"
     )
     
-    if msg_id:
-        bot.edit_message_text(success_msg, chat_id, msg_id, parse_mode="HTML", disable_web_page_preview=True)
-    else:
-        bot.send_message(chat_id, success_msg, parse_mode="HTML", disable_web_page_preview=True)
+    bot.send_photo(
+        chat_id=chat_id,
+        photo=state['cover_file_id'],
+        caption=f"💎 <b>Premium Preview:</b>\n\n{premium_caption}",
+        parse_mode="HTML"
+    )
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✏️ Edit Captions", callback_data=f"pt_edit:{post_id}:{user_id}"))
+    bot.send_message(chat_id, f"Need to make changes to Post #{post_id}?", reply_markup=markup)
