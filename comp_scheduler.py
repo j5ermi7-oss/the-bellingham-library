@@ -138,6 +138,36 @@ def setup_scheduler(bot):
         conn.close()
         
         bot.reply_to(message, f"✅ <b>Successfully canceled {len(pending)} scheduled post(s)!</b>")
+        
+    @bot.message_handler(commands=["scheduled", "pendingposts", "queue"])
+    def handle_view_scheduled(message):
+        from bot import is_admin
+        if not is_admin(message):
+            return
+            
+        import psycopg2.extras
+        conn = db.get_db_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cursor.execute("SELECT id, teaser_caption, scheduled_time FROM scheduled_posts WHERE status = 'pending' ORDER BY scheduled_time ASC")
+        pending = cursor.fetchall()
+        conn.close()
+        
+        if not pending:
+            bot.reply_to(message, "📭 <b>Queue Empty:</b> There are no compilations scheduled right now.")
+            return
+            
+        text = f"📅 <b>Scheduled Compilations ({len(pending)}):</b>\n\n"
+        for idx, post in enumerate(pending, 1):
+            time_str = post['scheduled_time'].strftime("%b %d, %I:%M %p (EAT)")
+            # Just extract the title from the teaser caption for a clean summary
+            import re
+            title_match = re.search(r'<b>(.*?)</b>', post['teaser_caption'])
+            title = title_match.group(1) if title_match else f"Post #{post['id']}"
+            
+            text += f"<b>{idx}. {title}</b>\n"
+            text += f"   └ 🕒 <i>Fires at {time_str}</i>\n\n"
+            
+        bot.reply_to(message, text, parse_mode="HTML")
 
     @bot.message_handler(content_types=['photo'])
     def handle_photo(message):
