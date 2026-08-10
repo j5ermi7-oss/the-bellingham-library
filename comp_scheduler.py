@@ -116,6 +116,29 @@ def setup_scheduler(bot):
         user_states[message.from_user.id] = {'step': 'waiting_for_media'}
         bot.reply_to(message, "✅ <b>Got it.</b>\nPlease send the cover photo with the Google Drive link in the caption.")
 
+    @bot.message_handler(commands=["cancelschedule", "cancelpost"])
+    def handle_cancelschedule(message):
+        from bot import is_admin
+        if not is_admin(message):
+            return
+            
+        import psycopg2.extras
+        conn = db.get_db_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cursor.execute("SELECT id FROM scheduled_posts WHERE status = 'pending'")
+        pending = cursor.fetchall()
+        
+        if not pending:
+            bot.reply_to(message, "ℹ️ There are no pending scheduled posts to cancel.")
+            conn.close()
+            return
+            
+        cursor.execute("DELETE FROM scheduled_posts WHERE status = 'pending'")
+        conn.commit()
+        conn.close()
+        
+        bot.reply_to(message, f"✅ <b>Successfully canceled {len(pending)} scheduled post(s)!</b>")
+
     @bot.message_handler(content_types=['photo'])
     def handle_photo(message):
         from bot import is_admin
@@ -199,16 +222,41 @@ def setup_scheduler(bot):
                 bot.edit_message_text("✍️ <b>Please type the custom FPS value:</b>\n<i>(e.g., 60)</i>", chat_id, msg_id, parse_mode="HTML")
             else:
                 state['fps'] = value
-                finalize_postteaser(bot, user_id, chat_id, msg_id)
+                check_fallback_requirements(bot, user_id, chat_id, msg_id)
                 
-    # Instead of a global interceptor that might conflict, we'll hook into bot.py's message handler directly,
-    # or use a very high priority. telebot calls handlers in the order they are registered.
-    # To intercept text, we'll rely on the existing bot.py sending this to us if the user is in state.
-    # But for cleaner design without editing bot.py's main text handler deeply, we register it here.
-    @bot.message_handler(func=lambda message: message.from_user.id in user_states and user_states[message.from_user.id].get('step') in ['waiting_for_custom_commentary', 'waiting_for_custom_fps'])
+        # --- NEW FALLBACK FLOWS ---
+        elif action == "pt_res" and state['step'] == 'waiting_for_resolution':
+            if value == "Other":
+                state['step'] = 'waiting_for_custom_resolution'
+                bot.edit_message_text("✍️ <b>Please type the custom Resolution:</b>\n<i>(e.g., 720)</i>", chat_id, msg_id, parse_mode="HTML")
+            else:
+                state['metadata']['height'] = value
+                check_fallback_requirements(bot, user_id, chat_id, msg_id)
+                
+        elif action == "pt_dur" and state['step'] == 'waiting_for_duration':
+            if value == "Other":
+                state['step'] = 'waiting_for_custom_duration'
+                bot.edit_message_text("✍️ <b>Please type the custom Duration:</b>\n<i>(e.g., 10:45)</i>", chat_id, msg_id, parse_mode="HTML")
+            else:
+                state['metadata']['duration_str'] = value
+                check_fallback_requirements(bot, user_id, chat_id, msg_id)
+                
+        elif action == "pt_siz" and state['step'] == 'waiting_for_size':
+            if value == "Other":
+                state['step'] = 'waiting_for_custom_size'
+                bot.edit_message_text("✍️ <b>Please type the custom Size (in GB):</b>\n<i>(e.g., 2.4)</i>", chat_id, msg_id, parse_mode="HTML")
+            else:
+                state['metadata']['size_gb'] = value
+                check_fallback_requirements(bot, user_id, chat_id, msg_id)
+
+    @bot.message_handler(func=lambda message: message.from_user.id in user_states and user_states[message.from_user.id].get('step') in [
+        'waiting_for_custom_commentary', 'waiting_for_custom_fps', 'waiting_for_custom_resolution', 'waiting_for_custom_duration', 'waiting_for_custom_size'
+    ])
     def handle_custom_text(message):
         user_id = message.from_user.id
         state = user_states[user_id]
+        chat_id = message.chat.id
+        msg_id = state.get('msg_id')
         
         if state['step'] == 'waiting_for_custom_commentary':
             text = message.text.strip().title()
@@ -216,14 +264,65 @@ def setup_scheduler(bot):
                 text += " Commentary"
             state['commentary'] = text
             state['step'] = 'waiting_for_fps'
-            
             markup = build_inline_keyboard(["25", "50", "Other"], "pt_fps", user_id)
-            msg = bot.send_message(message.chat.id, "🎞️ <b>Select FPS:</b>", reply_markup=markup, parse_mode="HTML")
+            msg = bot.send_message(chat_id, "🎞️ <b>Select FPS:</b>", reply_markup=markup, parse_mode="HTML")
             state['msg_id'] = msg.message_id
             
         elif state['step'] == 'waiting_for_custom_fps':
             state['fps'] = ''.join(filter(str.isdigit, message.text)) or "50"
-            finalize_postteaser(bot, user_id, message.chat.id, state.get('msg_id'))
+            check_fallback_requirements(bot, user_id, chat_id, msg_id)
+            
+        elif state['step'] == 'waiting_for_custom_resolution':
+            state['metadata']['height'] = ''.join(filter(str.isdigit, message.text)) or "1080"
+            check_fallback_requirements(bot, user_id, chat_id, msg_id)
+            
+        elif state['step'] == 'waiting_for_custom_duration':
+            state['metadata']['duration_str'] = message.text.strip()
+            check_fallback_requirements(bot, user_id, chat_id, msg_id)
+            
+        elif state['step'] == 'waiting_for_custom_size':
+            # keep numbers and dots
+            state['metadata']['size_gb'] = ''.join(c for c in message.text if c.isdigit() or c == '.') or "1.0"
+            check_fallback_requirements(bot, user_id, chat_id, msg_id)
+
+def check_fallback_requirements(bot, user_id, chat_id, msg_id):
+    """
+    Checks if metadata is missing (because it's a folder) and prompts the user.
+    If everything is present, it finalizes the post.
+    """
+    state = user_states.get(user_id)
+    if not state: return
+    
+    meta = state['metadata']
+    
+    # 1. Check Resolution
+    # We default height to '1080' in gdrive.py, but if it's a folder we should ask just to be safe. 
+    # Let's see if duration is unknown, meaning it's highly likely a folder.
+    if meta.get('duration_str') == 'Unknown' and meta.get('height') == '1080' and 'prompted_res' not in state:
+        state['prompted_res'] = True
+        state['step'] = 'waiting_for_resolution'
+        markup = build_inline_keyboard(["1080", "2160", "720", "Other"], "pt_res", user_id)
+        if msg_id: bot.edit_message_text("📏 <b>Select Resolution:</b>", chat_id, msg_id, reply_markup=markup, parse_mode="HTML")
+        else: state['msg_id'] = bot.send_message(chat_id, "📏 <b>Select Resolution:</b>", reply_markup=markup, parse_mode="HTML").message_id
+        return
+        
+    # 2. Check Duration
+    if meta.get('duration_str') == 'Unknown':
+        state['step'] = 'waiting_for_duration'
+        markup = build_inline_keyboard(["15:00", "20:00", "30:00", "45:00", "Other"], "pt_dur", user_id)
+        if msg_id: bot.edit_message_text("⏱️ <b>Select Duration:</b>", chat_id, msg_id, reply_markup=markup, parse_mode="HTML")
+        else: state['msg_id'] = bot.send_message(chat_id, "⏱️ <b>Select Duration:</b>", reply_markup=markup, parse_mode="HTML").message_id
+        return
+        
+    # 3. Check Size
+    if meta.get('size_gb') == 'Unknown':
+        state['step'] = 'waiting_for_size'
+        markup = build_inline_keyboard(["1.5", "2.0", "3.5", "5.0", "Other"], "pt_siz", user_id)
+        if msg_id: bot.edit_message_text("💾 <b>Select Size (GB):</b>", chat_id, msg_id, reply_markup=markup, parse_mode="HTML")
+        else: state['msg_id'] = bot.send_message(chat_id, "💾 <b>Select Size (GB):</b>", reply_markup=markup, parse_mode="HTML").message_id
+        return
+        
+    finalize_postteaser(bot, user_id, chat_id, msg_id)
 
 def finalize_postteaser(bot, user_id, chat_id, msg_id):
     state = user_states.pop(user_id, None)
