@@ -225,14 +225,22 @@ def setup_scheduler(bot):
             
         parts = call.data.split(':')
         action = parts[0]
-        value = parts[1]
-        user_id = int(parts[2])
+        if len(parts) >= 3:
+            value = parts[1]
+            user_id = int(parts[2])
+        else:
+            bot.answer_callback_query(call.id, "Invalid data.", show_alert=True)
+            return
+            
+        state = user_states.get(user_id)
         
-        if call.from_user.id != user_id or user_id not in user_states:
+        # We don't require an active state for edit actions because they can be triggered from /scheduled later
+        is_edit_action = action in ["pt_edit", "pt_edt_t", "pt_edt_p", "pt_edt_c"]
+        
+        if not state and not is_edit_action:
             bot.answer_callback_query(call.id, "Session expired or invalid.", show_alert=True)
             return
             
-        state = user_states[user_id]
         chat_id = call.message.chat.id
         msg_id = call.message.message_id
         
