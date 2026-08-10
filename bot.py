@@ -1955,7 +1955,7 @@ def handle_new_members(message):
         # Post in the Access Request thread
         send_to_admin_chat(text, reply_markup=markup)
 # ----------------- CALLBACK BUTTON HANDLER -----------------
-@bot.callback_query_handler(func=lambda call: True)
+@bot.callback_query_handler(func=lambda call: not call.data.startswith('pt_'))
 def handle_callbacks(call):
     data = call.data
     
