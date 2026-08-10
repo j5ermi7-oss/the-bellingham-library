@@ -197,6 +197,24 @@ def setup_scheduler(bot):
             markup.add(InlineKeyboardButton(f"✏️ Edit Post #{post['id']}", callback_data=f"pt_edit:{post['id']}:{message.from_user.id}"))
             bot.send_message(message.chat.id, f"Options for Post #{post['id']}:", reply_markup=markup)
 
+    @bot.message_handler(commands=["postnow", "forcepost"])
+    def handle_postnow(message):
+        from bot import is_admin
+        if not is_admin(message):
+            return
+            
+        conn = db.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE scheduled_posts SET scheduled_time = NOW() - INTERVAL '1 minute' WHERE status = 'pending'")
+        updated = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if updated == 0:
+            bot.reply_to(message, "ℹ️ There are no pending posts to force.")
+        else:
+            bot.reply_to(message, f"🚀 <b>Force Posting!</b>\n\n{updated} post(s) have had their timers skipped. They will be posted automatically within the next 60 seconds!", parse_mode="HTML")
+
     @bot.message_handler(content_types=['photo'])
     def handle_photo(message):
         from bot import is_admin
