@@ -163,19 +163,35 @@ def setup_scheduler(bot):
             
             bot.send_message(message.chat.id, f"━━━━━━━━━━━━━━━━━━━━\n🔥 <b>POST #{idx}</b> — Fires at <b>{time_str}</b>", parse_mode="HTML")
             
-            bot.send_photo(
-                chat_id=message.chat.id,
-                photo=post['cover_file_id'],
-                caption=f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n\n{post['teaser_caption']}",
-                parse_mode="HTML"
-            )
+            try:
+                bot.send_photo(
+                    chat_id=message.chat.id,
+                    photo=post['cover_file_id'],
+                    caption=f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n\n{post['teaser_caption']}",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                bot.send_photo(
+                    chat_id=message.chat.id,
+                    photo=post['cover_file_id'],
+                    caption=f"📢 Teaser Preview (@thejudelibrary):\n\n{post['teaser_caption']}\n\n⚠️ <i>HTML Formatting Error: {e}</i>",
+                    parse_mode=None
+                )
             
-            bot.send_photo(
-                chat_id=message.chat.id,
-                photo=post['cover_file_id'],
-                caption=f"💎 <b>Premium Preview (Group):</b>\n\n{post['premium_caption']}",
-                parse_mode="HTML"
-            )
+            try:
+                bot.send_photo(
+                    chat_id=message.chat.id,
+                    photo=post['cover_file_id'],
+                    caption=f"💎 <b>Premium Preview (Group):</b>\n\n{post['premium_caption']}",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                bot.send_photo(
+                    chat_id=message.chat.id,
+                    photo=post['cover_file_id'],
+                    caption=f"💎 Premium Preview (Group):\n\n{post['premium_caption']}\n\n⚠️ <i>HTML Formatting Error: {e}</i>",
+                    parse_mode=None
+                )
             
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton(f"✏️ Edit Post #{post['id']}", callback_data=f"pt_edit:{post['id']}:{message.from_user.id}"))
@@ -352,19 +368,35 @@ def setup_scheduler(bot):
             bot.send_message(chat_id, f"✅ <b>Successfully updated the {caption_type.title()} caption for Post #{post_id}!</b>", parse_mode="HTML")
             
             # Resend previews
-            bot.send_photo(
-                chat_id=chat_id,
-                photo=post['cover_file_id'],
-                caption=f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n\n{post['teaser_caption']}",
-                parse_mode="HTML"
-            )
+            try:
+                bot.send_photo(
+                    chat_id=chat_id,
+                    photo=post['cover_file_id'],
+                    caption=f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n\n{post['teaser_caption']}",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                bot.send_photo(
+                    chat_id=chat_id,
+                    photo=post['cover_file_id'],
+                    caption=f"📢 Teaser Preview (@thejudelibrary):\n\n{post['teaser_caption']}\n\n⚠️ <i>HTML Formatting Error: {e}</i>",
+                    parse_mode=None
+                )
             
-            bot.send_photo(
-                chat_id=chat_id,
-                photo=post['cover_file_id'],
-                caption=f"💎 <b>Premium Preview:</b>\n\n{post['premium_caption']}",
-                parse_mode="HTML"
-            )
+            try:
+                bot.send_photo(
+                    chat_id=chat_id,
+                    photo=post['cover_file_id'],
+                    caption=f"💎 <b>Premium Preview:</b>\n\n{post['premium_caption']}",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                bot.send_photo(
+                    chat_id=chat_id,
+                    photo=post['cover_file_id'],
+                    caption=f"💎 Premium Preview:\n\n{post['premium_caption']}\n\n⚠️ <i>HTML Formatting Error: {e}</i>",
+                    parse_mode=None
+                )
             
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton(f"✏️ Edit Post #{post_id}", callback_data=f"pt_edit:{post_id}:{user_id}"))
