@@ -267,4 +267,64 @@ def get_file_details(file_id):
         except Exception:
             return "Unknown File", []
 
-
+def get_video_metadata(file_id):
+    """
+    Fetches file size, video metadata, parent folder name, and file name.
+    Returns: dict with keys: 'name', 'size_gb', 'duration_str', 'height', 'parent_name'
+    """
+    try:
+        service = get_drive_service()
+        file_obj = service.files().get(
+            fileId=file_id,
+            fields="name, size, videoMediaMetadata, parents",
+            supportsAllDrives=True
+        ).execute()
+        
+        metadata = {
+            'name': file_obj.get('name', 'Unknown Video'),
+            'size_gb': 'Unknown',
+            'duration_str': 'Unknown',
+            'height': '1080',
+            'parent_name': 'Unknown'
+        }
+        
+        # Parse size
+        if 'size' in file_obj:
+            size_bytes = int(file_obj['size'])
+            size_gb = size_bytes / (1024 ** 3)
+            metadata['size_gb'] = f"{size_gb:.1f}"
+            
+        # Parse video metadata
+        video_info = file_obj.get('videoMediaMetadata', {})
+        if 'durationMillis' in video_info:
+            millis = int(video_info['durationMillis'])
+            seconds = (millis / 1000) % 60
+            minutes = (millis / (1000 * 60)) % 60
+            hours = (millis / (1000 * 60 * 60)) % 24
+            
+            if hours >= 1:
+                metadata['duration_str'] = f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+            else:
+                metadata['duration_str'] = f"{int(minutes):02d}:{int(seconds):02d}"
+                
+        if 'height' in video_info:
+            metadata['height'] = str(video_info['height'])
+            
+        # Get parent folder name
+        parents = file_obj.get('parents', [])
+        if parents:
+            parent_id = parents[0]
+            try:
+                parent_obj = service.files().get(
+                    fileId=parent_id,
+                    fields="name",
+                    supportsAllDrives=True
+                ).execute()
+                metadata['parent_name'] = parent_obj.get('name', 'Unknown')
+            except Exception as e:
+                print(f"Failed to get parent name: {e}")
+                
+        return metadata
+    except Exception as e:
+        print(f"Failed to get video metadata for {file_id}: {e}")
+        return None

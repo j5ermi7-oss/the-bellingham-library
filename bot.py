@@ -15,6 +15,9 @@ from dotenv import load_dotenv
 import db
 import gdrive
 import gemini
+import pytz
+from apscheduler.schedulers.background import BackgroundScheduler
+
 # Load configuration from .env file
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -266,6 +269,7 @@ COMMAND_MAP = {
     "unauth": "Unauthorize a user and revoke Drive access",
     "unauth_email": "Unauthorize buyer and revoke Drive access by email",
     "access": "Manually grant Google Drive access to an email for a link",
+    "postteaser": "Schedule a new compilation post",
     "test_announce": "Test buyer announcement in teaser channel",
     "setteaser": "Set teaser/announcement channel",
     "set_customer_number": "Set or adjust customer counter number",
@@ -333,6 +337,7 @@ def handle_refresh_menu(message):
             telebot.types.BotCommand("changepublic", "Make GDrive link public & mark it"),
             telebot.types.BotCommand("unregistered", "Reveal unregistered emails on comps"),
             telebot.types.BotCommand("access", "Grant access to email for a link"),
+            telebot.types.BotCommand("postteaser", "Schedule a new compilation post"),
             telebot.types.BotCommand("test_announce", "Test teaser announcement"),
             telebot.types.BotCommand("setteaser", "Set teaser channel"),
             telebot.types.BotCommand("set_customer_number", "Set customer counter"),
@@ -2434,6 +2439,10 @@ def handle_new_member(message):
             bot.reply_to(message, welcome_text, reply_markup=markup)
         except Exception as e:
             print(f"Failed to send welcome message: {e}")
+# ----------------- SCHEDULED COMPILATIONS -----------------
+import comp_scheduler
+comp_scheduler.setup_scheduler(bot)
+
 @bot.message_handler(func=lambda message: True, content_types=["text", "photo", "video", "document"])
 def handle_all_incoming(message):
     # Log chat IDs and thread IDs to help the owner configure their .env

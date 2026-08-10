@@ -92,6 +92,21 @@ def init_db():
     )
     """)
     
+    # 7. Scheduled Posts
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS scheduled_posts (
+        id SERIAL PRIMARY KEY,
+        file_id TEXT,
+        cover_file_id TEXT,
+        teaser_caption TEXT,
+        premium_caption TEXT,
+        premium_thread_id INTEGER,
+        scheduled_time TIMESTAMP,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    
     conn.commit()
     conn.close()
 # Username Cache Operations
@@ -661,5 +676,39 @@ def get_next_customer_number():
 def set_customer_number(num):
     set_setting("customer_count", str(num))
 
+# Scheduled Posts Operations
+def add_scheduled_post(file_id, cover_file_id, teaser_caption, premium_caption, premium_thread_id, scheduled_time):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO scheduled_posts (file_id, cover_file_id, teaser_caption, premium_caption, premium_thread_id, scheduled_time)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (file_id, cover_file_id, teaser_caption, premium_caption, premium_thread_id, scheduled_time))
+    conn.commit()
+    conn.close()
 
+def get_due_posts(current_time):
+    """Returns pending posts where scheduled_time <= current_time"""
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    cursor.execute("""
+        SELECT * FROM scheduled_posts 
+        WHERE status = 'pending' AND scheduled_time <= %s
+    """, (current_time,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
+def mark_post_completed(post_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE scheduled_posts SET status = 'completed' WHERE id = %s", (post_id,))
+    conn.commit()
+    conn.close()
+
+def mark_post_failed(post_id, reason):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE scheduled_posts SET status = 'failed', teaser_caption = CONCAT(teaser_caption, '\n\nError: ', %s) WHERE id = %s", (reason, post_id))
+    conn.commit()
+    conn.close()
