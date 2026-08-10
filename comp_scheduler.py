@@ -83,7 +83,7 @@ def setup_scheduler(bot):
                     )
                 
                 # 2. Post to Teaser Channel
-                teaser_chat_id = db.get_setting("teaser_channel_id") or os.getenv("TEASER_CHANNEL_ID")
+                teaser_chat_id = db.get_setting("teaser_channel_id") or os.getenv("TEASER_CHANNEL_ID") or "@thejudelibrary"
                 teaser_thread_id = db.get_setting("teaser_thread_id") or os.getenv("TEASER_THREAD_ID")
                 if teaser_chat_id:
                     t_kwargs = {}
@@ -116,7 +116,7 @@ def setup_scheduler(bot):
         user_states[message.from_user.id] = {'step': 'waiting_for_media'}
         bot.reply_to(message, "✅ <b>Got it.</b>\nPlease send the cover photo with the Google Drive link in the caption.")
 
-    @bot.message_handler(commands=["cancelschedule", "cancelpost"])
+    @bot.message_handler(commands=["cancelschedule", "cancelpost", "cancleschedule", "canclepost"])
     def handle_cancelschedule(message):
         from bot import is_admin
         if not is_admin(message):
@@ -340,9 +340,14 @@ def finalize_postteaser(bot, user_id, chat_id, msg_id):
     clean_title = clean_competition_from_title(base_name)
     resolution = f"{meta['height']}p{state['fps']}"
     
+    if state['interlacing'].lower() == "original":
+        interlacing_str = ""
+    else:
+        interlacing_str = f"[{state['interlacing']}] | "
+        
     teaser_caption = (
-        f"<b>{clean_title}</b> — {resolution} [{state['interlacing']}] | "
-        f"{meta['duration_str']} | {meta['size_gb']}GB | {state['commentary']} | {state['source']}"
+        f"<b>{clean_title}</b> — {resolution}\n"
+        f"{interlacing_str}{meta['duration_str']} | {meta['size_gb']}GB | {state['commentary']} | {state['source']}"
     )
     
     next_time = get_next_posting_time()
@@ -361,7 +366,7 @@ def finalize_postteaser(bot, user_id, chat_id, msg_id):
     success_msg = (
         f"✅ <b>Compilation Scheduled!</b>\n\n"
         f"🕒 <b>Posting Time:</b> {time_str}\n\n"
-        f"📢 <b>Teaser Preview:</b>\n{teaser_caption}\n\n"
+        f"📢 <b>Teaser Preview (@thejudelibrary):</b>\n{teaser_caption}\n\n"
         f"💎 <b>Premium Preview:</b>\n{premium_caption}"
     )
     
