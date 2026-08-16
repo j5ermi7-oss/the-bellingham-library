@@ -1423,6 +1423,9 @@ def handle_broadcast(message):
         InlineKeyboardButton("✅ General Chat", callback_data=f"confirm_broadcast:gen:{message.from_user.id}"),
         InlineKeyboardButton("📨 DM All Buyers", callback_data=f"confirm_broadcast:dms:{message.from_user.id}")
     )
+    markup.row(
+        InlineKeyboardButton("👤 DM Specific Buyer", callback_data=f"confirm_broadcast:dmsingle:{message.from_user.id}")
+    )
     markup.row(InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_broadcast:{message.from_user.id}"))
     
     if photo_id:
@@ -2364,6 +2367,21 @@ def handle_callbacks(call):
                     )
                     bot.answer_callback_query(call.id, f"Sent to {success_count} users!")
                     return
+                elif target_topic == "dmsingle":
+                    # Put data back for next step
+                    pending_broadcasts[user_id] = data_dict
+                    
+                    msg = bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text="👤 <b>DM Specific Buyer</b>\n\n"
+                             "Who do you want to send this message to?\n"
+                             "Please reply with their <b>Telegram ID</b>, <b>Username</b>, or forward one of their messages here.\n\n"
+                             "Type /cancel to abort."
+                    )
+                    bot.register_next_step_handler(msg, process_single_dm_target, user_id)
+                    bot.answer_callback_query(call.id)
+                    return
                 else:
                     topic_id = None
                     topic_name = "Main Chat"
@@ -2438,6 +2456,39 @@ def handle_callbacks(call):
                      "Type /cancel to abort."
             )
             bot.register_next_step_handler(msg, process_broadcast_reply, user_id)
+
+def process_single_dm_target(message, user_id):
+    if message.text and message.text.startswith("/"):
+        bot.reply_to(message, "Broadcast cancelled.")
+        pending_broadcasts.pop(user_id, None)
+        return
+        
+    data_dict = pending_broadcasts.pop(user_id, None)
+    if not data_dict:
+        bot.reply_to(message, "❌ Broadcast expired.")
+        return
+        
+    target_id, target_username, target_fname = resolve_target_user(message)
+    if not target_id:
+        bot.reply_to(message, "❌ Could not resolve user. Please try again with a valid username or ID.\n(To try again, you'll need to send the broadcast command again).")
+        return
+        
+    if isinstance(data_dict, str):
+        text = data_dict
+        photo_id = None
+    else:
+        text = data_dict["text"]
+        photo_id = data_dict["photo"]
+        
+    try:
+        if photo_id:
+            bot.send_photo(target_id, photo=photo_id, caption=text, parse_mode="HTML")
+        else:
+            bot.send_message(target_id, f"{safe_html(text)}", parse_mode="HTML")
+            
+        bot.reply_to(message, f"✅ <b>Successfully DMed {safe_html(target_fname)} (@{safe_html(target_username or 'User')})!</b>\n\n{safe_html(text)}")
+    except Exception as e:
+        bot.reply_to(message, f"❌ <b>Failed to DM user:</b>\nThey may have blocked the bot or not started it yet.\nError: {e}")
 
 def process_broadcast_reply(message, user_id):
     if message.text and message.text.startswith("/"):
