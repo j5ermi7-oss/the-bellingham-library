@@ -1,4 +1,9 @@
 import os
+import sys
+# Force unbuffered output so Render logs print immediately
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 import re
 import telebot
 import threading
@@ -2468,7 +2473,30 @@ def process_single_dm_target(message, user_id):
         bot.reply_to(message, "❌ Broadcast expired.")
         return
         
-    target_id, target_username, target_fname = resolve_target_user(message)
+    target_id = None
+    target_username = None
+    target_fname = "User"
+    
+    if message.forward_from:
+        target_id = message.forward_from.id
+        target_username = message.forward_from.username
+        target_fname = message.forward_from.first_name
+    elif message.text:
+        target_str = message.text.strip().split()[0]
+        if target_str.isdigit():
+            target_id = int(target_str)
+            user_info = db.get_user(target_id)
+            if user_info:
+                target_username = user_info["username"]
+                target_fname = user_info["first_name"]
+        else:
+            clean_username = target_str.replace("@", "").lower()
+            target_id = db.get_id_from_username(clean_username)
+            if target_id:
+                user_info = db.get_user(target_id)
+                if user_info:
+                    target_username = user_info["username"]
+                    target_fname = user_info["first_name"]
     if not target_id:
         bot.reply_to(message, "❌ Could not resolve user. Please try again with a valid username or ID.\n(To try again, you'll need to send the broadcast command again).")
         return
