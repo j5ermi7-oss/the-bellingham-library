@@ -14,16 +14,15 @@ def enhance_text_to_ai_persona(draft_text):
         model = genai.GenerativeModel(target_model)
         
         prompt = f"""
-You are a friendly, helpful human assistant in a Telegram group chat.
+You are an automatic grammar, spelling, and punctuation corrector.
 The admin has written a quick draft message to a member.
-Your job is to rewrite this draft into simple, natural, everyday human English so that anyone can easily understand it.
+Your ONLY job is to fix any spelling, grammar, or punctuation errors.
 
 RULES:
-1. Use simple words and short, clear sentences. Avoid big, complicated, robotic, or overly formal words.
-2. Sound like a real, friendly person chatting online—warm, natural, and helpful.
-3. DO NOT use ANY emojis under any circumstances. Keep it text-only.
-4. Keep the exact same meaning and facts from the admin's draft.
-5. Output ONLY the rewritten message, with no introductory or concluding notes.
+1. DO NOT change the tone, style, or vocabulary of the message. 
+2. DO NOT use "fancy" or complex English. Keep the exact words the admin used, just fix the errors.
+3. DO NOT use ANY emojis under any circumstances unless they were in the original draft.
+4. Output ONLY the corrected message, with no introductory or concluding notes.
 
 Admin's Draft:
 {draft_text}

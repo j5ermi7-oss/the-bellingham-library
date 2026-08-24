@@ -248,6 +248,7 @@ def safe_html(text):
 # Dictionary of all known bot commands & descriptions for typo detection
 COMMAND_MAP = {
     "start": "Check quota, email, and main options",
+    "ask": "Contact support with a question",
     "trending": "Top 15 most requested compilations",
     "pending": "View pending video edit review queue",
     "audit": "Full security dossier on a user",
@@ -738,6 +739,56 @@ def process_deduct_reason(message, target_id, target_username, target_fname, amo
     except Exception:
         pass
         
+@bot.message_handler(commands=["ask", "support"])
+def handle_ask(message):
+    user_id = message.from_user.id
+    if not db.is_user_authorized(user_id):
+        bot.reply_to(message, "❌ You are not authorized to use this bot.")
+        return
+        
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Please include your question after the command.\nUsage: `/ask How do I open the file?`")
+        return
+        
+    question = args[1]
+    user_name = message.from_user.username or message.from_user.first_name
+    
+    prompt = (
+        f"📩 <b>Support Question from Buyer</b>\n\n"
+        f"<b>User:</b> {safe_html(message.from_user.first_name)} (@{safe_html(user_name)})\n"
+        f"<b>ID:</b> <code>{user_id}</code>\n\n"
+        f"{safe_html(question)}\n\n"
+        f"<i>(Reply directly to this message to answer them. Your response will be auto-corrected by AI before sending.)</i>"
+    )
+    
+    # Try to react to the user's message with a thumbs up
+    try:
+        bot.set_message_reaction(message.chat.id, message.id, [ReactionTypeEmoji('👍')])
+    except Exception as e:
+        # Fallback if reactions are not supported or disabled in the chat
+        bot.reply_to(message, "✅ Question sent to admins.")
+        
+    # Forward to ALL owners
+    owner_msgs = {}
+    for owner_id in OWNER_IDS:
+        try:
+            msg = bot.send_message(owner_id, prompt)
+            owner_msgs[owner_id] = msg.message_id
+        except Exception as e:
+            print(f"Failed to forward modmail to owner {owner_id}: {e}")
+            
+    # Link all owner messages to the same support ticket
+    if owner_msgs:
+        target_info = {
+            "chat_id": message.chat.id,
+            "message_id": message.message_id,
+            "thread_id": None,
+            "owner_msgs": owner_msgs
+        }
+        for owner_id, msg_id in owner_msgs.items():
+            pending_ai_replies[msg_id] = target_info
+
 trending_name_cache = {}
 
 @bot.message_handler(commands=["trending", "top"])
@@ -2634,6 +2685,17 @@ def handle_all_incoming(message):
     if message.reply_to_message and message.reply_to_message.message_id in pending_ai_replies:
         if message.from_user.id in OWNER_IDS:
             target_info = pending_ai_replies.pop(message.reply_to_message.message_id)
+            
+            # Clean up other pending messages for other owners
+            if "owner_msgs" in target_info:
+                for oid, mid in target_info["owner_msgs"].items():
+                    pending_ai_replies.pop(mid, None) # Remove from pending dict
+                    if mid != message.reply_to_message.message_id:
+                        try:
+                            bot.delete_message(chat_id=oid, message_id=mid)
+                        except Exception:
+                            pass
+                            
             draft_text = message.text or message.caption or ""
             
             processing_msg = bot.reply_to(message, "⏳ <i>Polishing your response with AI...</i>")
@@ -2917,6 +2979,7 @@ def process_private_message(message):
         f"• Send a <b>Google Drive link</b> to claim a comp\n"
         f"• Send an <b>Email address</b> to register or update it\n"
         f"• Upload a <b>Video file</b> to reset your quota\n"
+        f"• Tap <code>/ask</code> to contact support\n"
         f"• Tap <code>/start</code> or <code>/trending</code> for options"
     )
 # Start bot
