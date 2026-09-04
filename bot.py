@@ -3017,4 +3017,9 @@ if __name__ == "__main__":
     threading.Thread(target=reminder_loop, daemon=True).start()
     
     print("Starting Telegram Bot polling...")
-    bot.infinity_polling()
+    while True:
+        try:
+            bot.infinity_polling(timeout=10, long_polling_timeout=5)
+        except Exception as e:
+            print(f"Polling crashed: {e}. Restarting in 3 seconds...")
+            time.sleep(3)
